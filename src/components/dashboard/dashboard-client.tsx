@@ -188,9 +188,9 @@ export function DashboardClient({ user }: { user: ShellUser }) {
 function AdminDashboard({ user }: { user: ShellUser }) {
   const [dateFilter, setDateFilter] = React.useState<DateFilter>(NO_FILTER);
 
-  const snapshotQ = useQuery({ queryKey: ["dashboard-pipeline-snapshot", dateFilter], queryFn: () => getPipelineSnapshot(dateFilter) });
-  const extrasQ = useQuery({ queryKey: ["dashboard-admin-extras", dateFilter], queryFn: () => getAdminDashboardExtras(dateFilter) });
-  const activityQ = useQuery({ queryKey: ["dashboard-activity", dateFilter], queryFn: () => getRecentActivity(dateFilter) });
+  const snapshotQ = useQuery({ queryKey: ["dashboard-pipeline-snapshot", dateFilter], queryFn: () => getPipelineSnapshot(dateFilter), staleTime: 0, refetchInterval: 30_000 });
+  const extrasQ = useQuery({ queryKey: ["dashboard-admin-extras", dateFilter], queryFn: () => getAdminDashboardExtras(dateFilter), staleTime: 0, refetchInterval: 30_000 });
+  const activityQ = useQuery({ queryKey: ["dashboard-activity", dateFilter], queryFn: () => getRecentActivity(dateFilter), staleTime: 0, refetchInterval: 30_000 });
 
   const unassignedCount = extrasQ.data?.unassigned_count ?? 0;
   const cards = snapshotQ.data?.cards ?? [];
@@ -334,7 +334,7 @@ function RolePendingDoneDashboard({
   emptyState?: { isEmpty: (data: RoleDashboardData) => boolean; message: string };
 }) {
   const [dateFilter, setDateFilter] = React.useState<DateFilter>(NO_FILTER);
-  const q = useQuery({ queryKey: [queryKey, dateFilter], queryFn: () => queryFn(dateFilter) });
+  const q = useQuery({ queryKey: [queryKey, dateFilter], queryFn: () => queryFn(dateFilter), staleTime: 0, refetchInterval: 30_000 });
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({});
   const [doneOpen, setDoneOpen] = React.useState(false);
 

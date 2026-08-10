@@ -195,7 +195,8 @@ function AllLeadsPageInner() {
     initialPageParam: null as string | null,
     queryFn: ({ pageParam }) => listAllLeads({ ...baseFilters, cursor: pageParam ?? null }),
     getNextPageParam: (last) => last.next_cursor,
-    staleTime: 120_000,
+    staleTime: 0,
+    refetchInterval: 30_000,
   });
 
   const allRows = React.useMemo(() => (infiniteQ.data?.pages ?? []).flatMap((p) => p.rows), [infiniteQ.data]);

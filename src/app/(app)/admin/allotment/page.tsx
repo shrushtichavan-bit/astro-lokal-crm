@@ -274,6 +274,8 @@ function UnassignedTab() {
   const q = useQuery({
     queryKey: ["admin-unassigned-leads", filterState.filters, page],
     queryFn: () => getUnassignedTelecallerLeads({ ...filterState.filters, page }),
+    staleTime: 0,
+    refetchInterval: 30_000,
   });
 
   const leads = React.useMemo(() => q.data?.leads ?? [], [q.data]);
@@ -438,6 +440,8 @@ function AssignedTab() {
   const q = useQuery({
     queryKey: ["admin-assigned-leads", filterState.filters, page],
     queryFn: () => getAssignedTelecallerLeads({ ...filterState.filters, page }),
+    staleTime: 0,
+    refetchInterval: 30_000,
   });
 
   const leads = React.useMemo(() => q.data?.leads ?? [], [q.data]);
