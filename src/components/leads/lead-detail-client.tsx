@@ -116,7 +116,7 @@ export function LeadDetailClient({ id, userEmail }: { id: string; userEmail: str
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Badge variant={data.lead.priority <= 2 ? "default" : "secondary"}>Priority {data.lead.priority}</Badge>
+            <Badge variant={data.lead.priority <= 2 ? "default" : "secondary"}>Source Priority {data.lead.priority}</Badge>
             <StatusPill kind={pill.kind} label={pill.label} />
           </div>
         </CardContent>
@@ -163,7 +163,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
     details: (
       <div className="space-y-1 text-sm text-muted-foreground">
         <div>Source: <span className="font-medium text-foreground">{lead.source ?? "Direct"}</span></div>
-        <div>Priority: <span className="font-medium text-foreground">{lead.priority}</span></div>
+        <div>Source Priority: <span className="font-medium text-foreground">{lead.priority}</span></div>
       </div>
     ),
   });

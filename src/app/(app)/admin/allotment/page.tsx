@@ -159,7 +159,7 @@ function AllotmentFiltersBar({
         <MultiSelectFilter label="Language" options={LANGUAGE_OPTIONS} selected={state.languages} onChange={state.setLanguages} />
         <MultiSelectFilter label="Source" options={sourceOptions} selected={state.sources} onChange={state.setSources} />
         <div>
-          <label className="mb-1 block text-xs text-muted-foreground">Priority</label>
+          <label className="mb-1 block text-xs text-muted-foreground">Source Priority</label>
           <Select value={state.priority || "__all"} onValueChange={(v) => state.setPriority(v === "__all" ? "" : v)}>
             <SelectTrigger className="w-24"><SelectValue placeholder="All" /></SelectTrigger>
             <SelectContent>
@@ -360,7 +360,7 @@ function UnassignedTab() {
                     <TableHead>Contact</TableHead>
                     <TableHead>Source</TableHead>
                     <TableHead>Language</TableHead>
-                    <TableHead>Priority</TableHead>
+                    <TableHead>Source Priority</TableHead>
                     <TableHead className="cursor-pointer select-none" onClick={filterState.toggleDateSort}>
                       Date {filterState.dateDir === "asc" ? "↑" : "↓"}
                     </TableHead>
@@ -553,7 +553,7 @@ function AssignedTab() {
                     <TableHead>Contact</TableHead>
                     <TableHead>Source</TableHead>
                     <TableHead>Language</TableHead>
-                    <TableHead>Priority</TableHead>
+                    <TableHead>Source Priority</TableHead>
                     <TableHead className="cursor-pointer select-none" onClick={filterState.toggleDateSort}>
                       Date {filterState.dateDir === "asc" ? "↑" : "↓"}
                     </TableHead>

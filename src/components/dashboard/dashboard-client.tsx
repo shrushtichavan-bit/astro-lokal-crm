@@ -130,7 +130,7 @@ function LeadRowsTable({ leads }: { leads: LeadRow[] }) {
           <TableHead>Name</TableHead>
           <TableHead>Contact</TableHead>
           <TableHead>Source</TableHead>
-          <SortableHead label="Priority" sortKeyValue="priority" />
+          <SortableHead label="Source Priority" sortKeyValue="priority" />
           <SortableHead label="Date" sortKeyValue="lead_date" />
           <TableHead />
         </TableRow>

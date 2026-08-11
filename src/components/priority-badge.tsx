@@ -16,7 +16,7 @@ export function PriorityBadge({ priority, className }: { priority: number; class
       className={`inline-flex items-center whitespace-nowrap rounded-md px-2 py-0.5 text-xs font-semibold ${className ?? ""}`}
       style={{ backgroundColor: s.bg, color: s.fg }}
     >
-      P{priority}
+      S{priority}
     </span>
   );
 }

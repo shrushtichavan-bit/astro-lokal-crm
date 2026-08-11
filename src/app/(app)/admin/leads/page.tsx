@@ -316,7 +316,7 @@ function AllLeadsPageInner() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="lead_date">Lead date</SelectItem>
-                  <SelectItem value="priority">Priority</SelectItem>
+                  <SelectItem value="priority">Source Priority</SelectItem>
                   <SelectItem value="stage">Stage</SelectItem>
                   <SelectItem value="updated">Last updated</SelectItem>
                 </SelectContent>

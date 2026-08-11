@@ -323,7 +323,7 @@ export default function SourcesPage() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Source</TableHead>
-                  <TableHead className="text-right">Priority</TableHead>
+                  <TableHead className="text-right">Source Priority</TableHead>
                   <TableHead className="text-center">Active</TableHead>
                   <TableHead>Form Link</TableHead>
                   <TableHead />
