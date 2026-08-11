@@ -40,7 +40,7 @@ const APPS_SCRIPT = `/**
  *      has a working trigger.)
  */
 
-var INTAKE_URL   = "https://dev-astro-astrolokalcrm.astrolokal.com/api/intake-lead";
+var INTAKE_URL   = "https://astro-lokal-crm.astrolokal.com/api/intake-lead";
 var SOURCE_NAME  = "";
 var NOTIFY_EMAILS = ["shrushti.chavan@getlokalapp.com", "tejaswi@getlokalapp.com"];
 
