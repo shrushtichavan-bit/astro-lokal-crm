@@ -196,6 +196,65 @@ export async function reassignStageOwner(input: { lead_id: string; stage: string
   return { ok: true };
 }
 
+const RETAKE_STAGES = ["calling", "round_1", "round_2", "round_3", "round_4"] as const;
+
+/**
+ * Resets an already-completed calling or round stage back to in-progress —
+ * used by the Retake control on the lead detail Timeline. Undoes exactly
+ * that stage's own recorded result (the latest call attempt + calling_status
+ * for calling, or the interview_rounds row for a round) and moves the lead's
+ * current_stage/current_owner_email back to it.
+ */
+export async function retakeStage(input: { lead_id: string; stage: string }) {
+  const data = z
+    .object({ lead_id: z.string().uuid(), stage: z.enum(RETAKE_STAGES) })
+    .parse(input);
+  const u = await requireUser();
+
+  const { rows: leadRows } = await pool.query<LeadRow>(`SELECT * FROM leads WHERE id = $1`, [data.lead_id]);
+  const lead = leadRows[0];
+  if (!lead) throw new Error("Lead not found");
+
+  const pendingStage = CURRENT_STAGE_FOR[data.stage];
+  if (lead.current_stage === pendingStage) throw new Error("This stage is already in progress");
+
+  let nextOwner: string;
+
+  if (data.stage === "calling") {
+    const { rows: attemptRows } = await pool.query<{ id: string }>(
+      `SELECT id FROM call_attempts WHERE lead_id = $1 ORDER BY attempt_number DESC LIMIT 1`,
+      [lead.id],
+    );
+    if (!attemptRows[0]) throw new Error("No call attempt has been logged yet");
+    await pool.query(`DELETE FROM call_attempts WHERE id = $1`, [attemptRows[0].id]);
+    await pool.query(`DELETE FROM calling_status WHERE lead_id = $1`, [lead.id]);
+    nextOwner = lead.assigned_to_email ?? lead.current_owner_email ?? u.email;
+    await pool.query(
+      `UPDATE leads SET current_stage = $1, current_owner_email = $2, assigned_to_email = $2, closed_at = NULL WHERE id = $3`,
+      [pendingStage, nextOwner, lead.id],
+    );
+  } else {
+    const roundNumber = Number(data.stage.slice("round_".length));
+    const { rows: roundRows } = await pool.query<{ id: string; conducted_by: string }>(
+      `SELECT id, conducted_by FROM interview_rounds WHERE lead_id = $1 AND round_number = $2`,
+      [lead.id, roundNumber],
+    );
+    const round = roundRows[0];
+    if (!round) throw new Error(`Round ${roundNumber} hasn't been conducted yet`);
+    await pool.query(`DELETE FROM interview_rounds WHERE id = $1`, [round.id]);
+    nextOwner = round.conducted_by ?? lead.current_owner_email ?? u.email;
+    await pool.query(
+      `UPDATE leads SET current_stage = $1, current_owner_email = $2, closed_at = NULL WHERE id = $3`,
+      [pendingStage, nextOwner, lead.id],
+    );
+  }
+
+  const stageLabel = data.stage === "calling" ? "Calling" : `Round ${data.stage.slice("round_".length)}`;
+  await appendAudit(lead.id, `Stage ${stageLabel} reset for retake by ${u.email}`, u.email, { stage: data.stage });
+
+  return { ok: true };
+}
+
 // ---------- Telecaller ----------
 
 export async function logCallOutcome(input: {

@@ -13,6 +13,7 @@ import {
   submitRound,
   linkExpertProfile,
   reassignStageOwner,
+  retakeStage,
 } from "@/lib/actions/leads-actions";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState } from "@/components/empty-state";
@@ -24,6 +25,16 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 
 type LeadData = Awaited<ReturnType<typeof getLead>>;
 
@@ -190,8 +201,11 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
     details: (
       <div className="space-y-2 text-sm text-muted-foreground">
         <div>Assigned to: <span className="font-medium text-foreground">{nameOf(callingAssignedEmail)}</span></div>
-        {callingAssignedEmail && (
+        {callingState === "current" && callingAssignedEmail && (
           <ReassignControl leadId={lead.id} stage="calling" currentEmail={callingAssignedEmail} onChanged={onChanged} />
+        )}
+        {callingState === "done" && (
+          <RetakeControl leadId={lead.id} stage="calling" stageLabel="Calling" onChanged={onChanged} />
         )}
         {sortedAttempts.length === 0 && <div>No attempts logged yet.</div>}
         {sortedAttempts.map((a) => {
@@ -248,8 +262,11 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
             Conducted by:{" "}
             <span className="font-medium text-foreground">{nameOf(round?.conducted_by) ?? nameOf(assignedTo) ?? "Not started yet"}</span>
           </div>
-          {state !== "future" && (round?.conducted_by ?? assignedTo) && (
+          {state === "current" && (round?.conducted_by ?? assignedTo) && (
             <ReassignControl leadId={lead.id} stage={stageKey} currentEmail={round?.conducted_by ?? assignedTo} onChanged={onChanged} />
+          )}
+          {state === "done" && (
+            <RetakeControl leadId={lead.id} stage={stageKey} stageLabel={`Round ${n}`} onChanged={onChanged} />
           )}
           {round?.total_score != null && <div>Score: <span className="font-medium text-foreground">{round.total_score}</span></div>}
           {round?.remarks && <div>Notes: {round.remarks}</div>}
@@ -297,7 +314,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
           Assigned to:{" "}
           <span className="font-medium text-foreground">{nameOf(profile?.linked_by) ?? nameOf(assignedCreation) ?? "Not started yet"}</span>
         </div>
-        {creationState !== "future" && (profile?.linked_by ?? assignedCreation) && (
+        {creationState === "current" && (profile?.linked_by ?? assignedCreation) && (
           <ReassignControl
             leadId={lead.id}
             stage="expert_creation"
@@ -416,6 +433,62 @@ function ReassignControl({
       </Button>
       {!poolQ.isLoading && options.length === 0 && <p className="w-full text-xs text-destructive">No one else is in this stage&apos;s pool.</p>}
     </div>
+  );
+}
+
+/** Inline "Retake" link + confirm dialog shown on a completed calling/round Timeline stage — resets it back to in-progress. */
+function RetakeControl({
+  leadId,
+  stage,
+  stageLabel,
+  onChanged,
+}: {
+  leadId: string;
+  stage: string;
+  stageLabel: string;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+
+  async function confirm() {
+    setBusy(true);
+    try {
+      await retakeStage({ lead_id: leadId, stage });
+      toast.success(`${stageLabel} reset for retake.`);
+      setOpen(false);
+      onChanged();
+    } catch (e) {
+      toast.error("Something went wrong.", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <button type="button" className="text-xs font-medium text-primary hover:underline">
+          Retake
+        </button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Retake {stageLabel}?</DialogTitle>
+          <DialogDescription>
+            Are you sure you want to retake {stageLabel}? This will reset the result and mark it as In Progress again.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <DialogClose asChild>
+            <Button variant="outline">Cancel</Button>
+          </DialogClose>
+          <Button variant="destructive" disabled={busy} onClick={confirm}>
+            {busy ? "Resetting…" : "Retake"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
