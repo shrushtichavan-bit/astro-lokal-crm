@@ -125,6 +125,11 @@ export function LeadDetailClient({ id, userEmail }: { id: string; userEmail: str
                 </>
               )}
             </div>
+            {data.profile?.expert_id && (
+              <div className="mt-2">
+                <Badge variant="secondary">Expert ID: {data.profile.expert_id}</Badge>
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2">
             <Badge variant={data.lead.priority <= 2 ? "default" : "secondary"}>Source Priority {data.lead.priority}</Badge>
