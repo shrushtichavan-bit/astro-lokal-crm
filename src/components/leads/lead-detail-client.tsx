@@ -384,6 +384,7 @@ function ReassignControl({
   const [open, setOpen] = React.useState(false);
   const [value, setValue] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const queryClient = useQueryClient();
   const poolQ = useQuery({ queryKey: ["pool", stage], queryFn: () => getPool({ stage }), staleTime: 5 * 60_000, enabled: open });
   const pool = poolQ.data?.members ?? [];
   const names = poolQ.data?.names ?? {};
@@ -393,6 +394,10 @@ function ReassignControl({
     setBusy(true);
     try {
       await reassignStageOwner({ lead_id: leadId, stage, new_email: value });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-pipeline-snapshot"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-admin-extras"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-activity"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-pool"] });
       toast.success(`Reassigned to ${names[value] ?? value}.`);
       setOpen(false);
       setValue("");
@@ -455,11 +460,16 @@ function RetakeControl({
 }) {
   const [open, setOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const queryClient = useQueryClient();
 
   async function confirm() {
     setBusy(true);
     try {
       await retakeStage({ lead_id: leadId, stage });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-pipeline-snapshot"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-admin-extras"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-activity"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-pool"] });
       toast.success(`${stageLabel} reset for retake.`);
       setOpen(false);
       onChanged();
@@ -547,6 +557,7 @@ const CALLING_OPTIONS = [
 
 function CallingActions({ data, onChanged }: { data: LeadData; onChanged: () => void }) {
   const { lead, attempts } = data;
+  const queryClient = useQueryClient();
   const round1PoolQ = useQuery({ queryKey: ["pool", "round_1"], queryFn: () => getPool({ stage: "round_1" }), staleTime: 5 * 60_000 });
 
   const sorted = [...attempts].sort((a, b) => a.attempt_number - b.attempt_number);
@@ -596,6 +607,10 @@ function CallingActions({ data, onChanged }: { data: LeadData; onChanged: () => 
         remarks: remarks || null,
         next_owner_email: outcome === "connected" ? nextOwner : null,
       });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-pipeline-snapshot"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-admin-extras"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-activity"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-pool"] });
       toast.success(outcome === "connected" ? `Lead passed to ${round1Names[nextOwner] ?? nextOwner} for Round 1.` : "Attempt saved.");
       setOutcome(null);
       setRemarks("");
@@ -671,6 +686,7 @@ function CallingActions({ data, onChanged }: { data: LeadData; onChanged: () => 
 
 function RoundActions({ data, round, onChanged }: { data: LeadData; round: number; onChanged: () => void }) {
   const { lead } = data;
+  const queryClient = useQueryClient();
   const startQ = useQuery({ queryKey: ["round-questions", lead.id, round], queryFn: () => startRound({ lead_id: lead.id, round_number: round }) });
   const numRounds = data.cfg.num_rounds;
   const isLastRound = round >= numRounds;
@@ -709,6 +725,10 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
         remarks: remarks || null,
         next_owner_email: nextOwner,
       });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-pipeline-snapshot"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-admin-extras"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-activity"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-pool"] });
       setVerdict({ verdict: r.verdict ?? null, total: r.total_score ?? 0 });
       if (r.verdict === "passed") toast.success(`Round ${round} passed. Moving to ${nextStageLabel}.`);
       else if (r.verdict === "failed") toast.error(`Round ${round} not passed.`);
@@ -825,6 +845,7 @@ function ProfileActions({ data, onChanged }: { data: LeadData; onChanged: () => 
   const { lead } = data;
   const [expertId, setExpertId] = React.useState("");
   const [busy, setBusy] = React.useState(false);
+  const queryClient = useQueryClient();
 
   async function submit() {
     if (!expertId.trim()) {
@@ -834,6 +855,10 @@ function ProfileActions({ data, onChanged }: { data: LeadData; onChanged: () => 
     setBusy(true);
     try {
       await linkExpertProfile({ lead_id: lead.id, expert_id: expertId.trim() });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-pipeline-snapshot"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-admin-extras"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-activity"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard-pool"] });
       toast.success("Expert profile linked.");
       onChanged();
     } catch (e) {
