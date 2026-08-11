@@ -275,7 +275,7 @@ export async function getTAT(input: DateOnlyT) {
   const dateIds = await leadsInDateRange(f);
 
   const [leadsRes, attsRes, csRes, roundsRes, profilesRes] = await Promise.all([
-    pool.query<{ id: string; created_at: string }>(`SELECT id, created_at FROM leads`),
+    pool.query<{ id: string; created_at: string; assigned_at: string | null }>(`SELECT id, created_at, assigned_at FROM leads`),
     pool.query<{ lead_id: string; attempted_at: string }>(`SELECT lead_id, attempted_at FROM call_attempts`),
     pool.query<{ lead_id: string; status: string; set_at: string }>(`SELECT lead_id, status, set_at FROM calling_status`),
     pool.query<{ lead_id: string; round_number: number; started_at: string; submitted_at: string | null }>(
@@ -317,12 +317,19 @@ export async function getTAT(input: DateOnlyT) {
 
   const out: Array<{ label: string; threshold: number; stats: ReturnType<typeof statsHours> }> = [];
 
-  const d1: number[] = [];
-  for (const [lid, lead] of leadById) {
-    const fa = firstAttempt.get(lid);
-    if (fa) d1.push(diff(lead.created_at, fa));
+  const d1a: number[] = [];
+  for (const [, lead] of leadById) {
+    if (lead.assigned_at) d1a.push(diff(lead.created_at, lead.assigned_at));
   }
-  out.push({ label: "Lead → First Attempt", threshold: 24, stats: statsHours(d1) });
+  out.push({ label: "Lead → Allotted", threshold: 24, stats: statsHours(d1a) });
+
+  const d1b: number[] = [];
+  for (const [lid, lead] of leadById) {
+    if (!lead.assigned_at) continue;
+    const fa = firstAttempt.get(lid);
+    if (fa) d1b.push(diff(lead.assigned_at, fa));
+  }
+  out.push({ label: "Allotted → First Attempt", threshold: 24, stats: statsHours(d1b) });
 
   const d2: number[] = [];
   for (const [lid, fa] of firstAttempt) {

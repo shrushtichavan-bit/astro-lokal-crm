@@ -169,7 +169,7 @@ export async function assignTelecallerBulk(input: { lead_ids: string[]; telecall
   );
   const stillCalling = leads.filter((l) => l.current_stage === "calling_pending").map((l) => l.id);
 
-  await pool.query(`UPDATE leads SET assigned_to_email = $1 WHERE id = ANY($2::uuid[])`, [telecaller, data.lead_ids]);
+  await pool.query(`UPDATE leads SET assigned_to_email = $1, assigned_at = NOW() WHERE id = ANY($2::uuid[])`, [telecaller, data.lead_ids]);
 
   if (stillCalling.length > 0) {
     await pool.query(`UPDATE leads SET current_owner_email = $1 WHERE id = ANY($2::uuid[])`, [telecaller, stillCalling]);
