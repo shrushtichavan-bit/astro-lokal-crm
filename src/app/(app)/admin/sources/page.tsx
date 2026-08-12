@@ -167,7 +167,7 @@ function notifyFailure_(raw, formTitle, errorDetail) {
   MailApp.sendEmail({
     to: NOTIFY_EMAILS.join(","),
     subject: "Lead intake failed - " + formTitle,
-    body: lines.join("")
+    body: lines.join("\n")
   });
 }
 
