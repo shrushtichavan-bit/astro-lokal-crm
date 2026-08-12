@@ -71,13 +71,20 @@ export async function getQuestions(input: { round_number: number }) {
 
 export async function upsertQuestions(input: {
   round_number: number;
-  questions: Array<{ question_id: string; question_text: string; display_order: number }>;
+  questions: Array<{ question_id: string; question_text: string; display_order: number; max_marks: number }>;
 }) {
   const data = z
     .object({
       round_number: z.number().int().min(1).max(4),
       questions: z
-        .array(z.object({ question_id: z.string().min(1).max(100), question_text: z.string().min(1).max(2000), display_order: z.number().int().min(0) }))
+        .array(
+          z.object({
+            question_id: z.string().min(1).max(100),
+            question_text: z.string().min(1).max(2000),
+            display_order: z.number().int().min(0),
+            max_marks: z.number().int().min(1),
+          }),
+        )
         .max(200),
     })
     .parse(input);
@@ -87,12 +94,12 @@ export async function upsertQuestions(input: {
     const values: string[] = [];
     const params: unknown[] = [];
     data.questions.forEach((q, i) => {
-      const base = i * 4;
-      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
-      params.push(data.round_number, q.question_id.trim(), q.question_text, q.display_order);
+      const base = i * 5;
+      values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
+      params.push(data.round_number, q.question_id.trim(), q.question_text, q.display_order, q.max_marks);
     });
     await pool.query(
-      `INSERT INTO questions (round_number, question_id, question_text, display_order) VALUES ${values.join(", ")}`,
+      `INSERT INTO questions (round_number, question_id, question_text, display_order, max_marks) VALUES ${values.join(", ")}`,
       params,
     );
   }

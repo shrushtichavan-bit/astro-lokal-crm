@@ -350,8 +350,8 @@ export async function startRound(input: { lead_id: string; round_number: number 
   const expectedStage = `round_${data.round_number}_pending`;
   if (lead.current_stage !== expectedStage)
     throw new Error(`Lead is not in ${expectedStage} (currently ${lead.current_stage})`);
-  const { rows: questions } = await pool.query<Pick<QuestionRow, "question_id" | "question_text" | "display_order">>(
-    `SELECT question_id, question_text, display_order FROM questions WHERE round_number = $1 ORDER BY display_order`,
+  const { rows: questions } = await pool.query<Pick<QuestionRow, "question_id" | "question_text" | "display_order" | "max_marks">>(
+    `SELECT question_id, question_text, display_order, max_marks FROM questions WHERE round_number = $1 ORDER BY display_order`,
     [data.round_number],
   );
   return { questions };
@@ -373,7 +373,7 @@ export async function submitRound(input: {
           z.object({
             question_id: z.string().min(1).max(100),
             question_text_used: z.string().min(1).max(2000),
-            grade: z.number().int().min(0).max(5),
+            grade: z.number().int().min(0),
           }),
         )
         .min(1)

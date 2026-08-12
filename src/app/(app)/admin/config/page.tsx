@@ -150,16 +150,23 @@ function QuestionsTab() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["admin-questions", round], queryFn: () => getQuestions({ round_number: round }) });
 
-  type Row = { question_id: string; question_text: string; display_order: number };
+  type Row = { question_id: string; question_text: string; display_order: number; max_marks: number };
   const [rows, setRows] = React.useState<Row[]>([]);
   const [busy, setBusy] = React.useState(false);
 
   React.useEffect(() => {
-    setRows((q.data?.questions ?? []).map((r) => ({ question_id: r.question_id, question_text: r.question_text, display_order: r.display_order })));
+    setRows(
+      (q.data?.questions ?? []).map((r) => ({
+        question_id: r.question_id,
+        question_text: r.question_text,
+        display_order: r.display_order,
+        max_marks: r.max_marks,
+      })),
+    );
   }, [q.data]);
 
   function addRow() {
-    setRows([...rows, { question_id: `q${rows.length + 1}`, question_text: "", display_order: rows.length }]);
+    setRows([...rows, { question_id: `q${rows.length + 1}`, question_text: "", display_order: rows.length, max_marks: 5 }]);
   }
   function removeRow(i: number) {
     setRows(rows.filter((_, idx) => idx !== i));
@@ -212,6 +219,15 @@ function QuestionsTab() {
                 <div className="w-20 shrink-0">
                   <Label className="text-xs text-muted-foreground">Order</Label>
                   <Input type="number" value={r.display_order} onChange={(e) => updateRow(i, { display_order: parseInt(e.target.value, 10) || 0 })} />
+                </div>
+                <div className="w-20 shrink-0">
+                  <Label className="text-xs text-muted-foreground">Out of</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={r.max_marks}
+                    onChange={(e) => updateRow(i, { max_marks: parseInt(e.target.value, 10) || 5 })}
+                  />
                 </div>
                 <Button size="sm" variant="outline" className="self-end" onClick={() => removeRow(i)}>Remove</Button>
               </div>

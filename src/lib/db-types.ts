@@ -72,6 +72,7 @@ export interface QuestionRow {
   question_id: string;
   question_text: string;
   display_order: number;
+  max_marks: number;
 }
 
 export interface InterviewRoundRow {

@@ -767,7 +767,7 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
     <Card>
       <CardContent className="p-6">
         <p className="text-base font-semibold text-foreground">Round {round}</p>
-        <p className="mt-1 text-sm text-muted-foreground">Grade each question from 0 (poor) to 5 (excellent).</p>
+        <p className="mt-1 text-sm text-muted-foreground">Grade each question — 0 is poor, higher is better.</p>
 
         {startQ.isLoading ? (
           <div className="mt-5 space-y-3">
@@ -781,7 +781,7 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
                 <div className="text-xs font-medium text-muted-foreground">Question {i + 1} of {questions.length}</div>
                 <p className="mt-1 text-sm text-foreground">{q.question_text}</p>
                 <div className="mt-3 flex flex-wrap gap-2">
-                  {[0, 1, 2, 3, 4, 5].map((n) => {
+                  {Array.from({ length: (q.max_marks ?? 5) + 1 }, (_, i) => i).map((n) => {
                     const selected = grades[q.question_id] === n;
                     return (
                       <button
