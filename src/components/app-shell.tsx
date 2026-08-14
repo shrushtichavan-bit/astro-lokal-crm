@@ -53,21 +53,19 @@ const ADMIN_SECONDARY: NavItem[] = [
 ];
 const SYNC_ITEM: NavItem = { href: "/sync", label: "Sync", icon: RefreshCw };
 
-// KAM: allotment, all leads, add lead, config, sync, dashboard.
+// KAM: allotment, all leads, add lead, sync, dashboard. Config is admin-only.
 const KAM_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/allotment", label: "Allotment", icon: ListChecks },
   { href: "/admin/leads", label: "All Leads", icon: Users2 },
   { href: "/admin/leads/add", label: "Add Lead", icon: UserPlus },
-  { href: "/admin/config", label: "Config", icon: Settings },
 ];
 // LMA: does round 1/2 interviews + expert profile creation. Access: dashboard,
-// all leads, add lead, config, sync — no allotment (that's KAM/admin only).
+// all leads, add lead, sync — no allotment (that's KAM/admin only), config is admin-only.
 const LMA_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/leads", label: "All Leads", icon: Users2 },
   { href: "/admin/leads/add", label: "Add Lead", icon: UserPlus },
-  { href: "/admin/config", label: "Config", icon: Settings },
 ];
 // Telecaller: calling attempts only. Access: dashboard, add lead.
 const TELECALLER_NAV: NavItem[] = [
