@@ -22,9 +22,9 @@ function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
 
-const SAMPLE_CSV = `name,contact,email,city,language,source,lead_date
-Priya Sharma,9876543210,priya@example.com,Mumbai,Hindi,Referral,2026-07-01
-Rahul Verma,9123456780,rahul@example.com,Delhi,English,Website,2026-07-05
+const SAMPLE_CSV = `name,contact,email,city,language,lead_date
+Priya Sharma,9876543210,priya@example.com,Mumbai,Hindi,2026-07-01
+Rahul Verma,9123456780,rahul@example.com,Delhi,English,2026-07-05
 `;
 
 function downloadSampleCsv() {
@@ -187,17 +187,23 @@ function ManualAddTab() {
   );
 }
 
-type CsvRow = { name: string; contact: string; email?: string; city?: string; language?: string; source: string; lead_date?: string };
+type CsvRow = { name: string; contact: string; email?: string; city?: string; language?: string; lead_date?: string };
 type BulkResult = Awaited<ReturnType<typeof bulkAddLeads>>;
+
+const CSV_SOURCE_COLUMN_ERROR =
+  "Your CSV contains a 'source' column. Please remove it and re-upload. Source is now selected from the dropdown above.";
 
 function BulkUploadTab() {
   const qc = useQueryClient();
+  const sourcesQ = useQuery({ queryKey: ["active-sources"], queryFn: () => listActiveSources() });
   const poolQ = useQuery({ queryKey: ["pool", "calling"], queryFn: () => getPool({ stage: "calling" }), staleTime: 10 * 60_000 });
 
+  const [source, setSource] = React.useState("");
   const [telecaller, setTelecaller] = React.useState("");
   const [rows, setRows] = React.useState<CsvRow[]>([]);
   const [fileName, setFileName] = React.useState<string | null>(null);
   const [parseErrors, setParseErrors] = React.useState<string[]>([]);
+  const [csvSourceError, setCsvSourceError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [result, setResult] = React.useState<BulkResult | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -207,11 +213,18 @@ function BulkUploadTab() {
     if (!file) return;
     setFileName(file.name);
     setResult(null);
-    Papa.parse<CsvRow>(file, {
+    setCsvSourceError(null);
+    Papa.parse<Record<string, string>>(file, {
       header: true,
       skipEmptyLines: true,
       transformHeader: (h) => h.trim().toLowerCase(),
       complete: (res) => {
+        if ((res.meta.fields ?? []).includes("source")) {
+          setRows([]);
+          setParseErrors([]);
+          setCsvSourceError(CSV_SOURCE_COLUMN_ERROR);
+          return;
+        }
         const errs = res.errors.map((er) => `Row ${er.row ?? "?"}: ${er.message}`);
         const parsed = res.data
           .filter((r) => r.name || r.contact)
@@ -221,7 +234,6 @@ function BulkUploadTab() {
             email: (r.email ?? "").trim() || undefined,
             city: (r.city ?? "").trim() || undefined,
             language: (r.language ?? "").trim() || undefined,
-            source: (r.source ?? "").trim(),
             lead_date: (r.lead_date ?? "").trim() || undefined,
           }));
         setRows(parsed);
@@ -235,6 +247,10 @@ function BulkUploadTab() {
   }
 
   async function upload() {
+    if (!source) {
+      toast.warning("Select a source first.");
+      return;
+    }
     if (rows.length === 0) {
       toast.warning("Upload a CSV file with at least one row first.");
       return;
@@ -242,7 +258,7 @@ function BulkUploadTab() {
     setBusy(true);
     setResult(null);
     try {
-      const r = await bulkAddLeads({ rows, assigned_telecaller_email: telecaller || null });
+      const r = await bulkAddLeads({ rows, source, assigned_telecaller_email: telecaller || null });
       setResult(r);
       toast.success(`${r.added} lead${r.added === 1 ? "" : "s"} added, ${r.duplicates.length} duplicate${r.duplicates.length === 1 ? "" : "s"} skipped, ${r.errors.length} error${r.errors.length === 1 ? "" : "s"}.`);
       qc.invalidateQueries({ queryKey: ["my-leads"] });
@@ -263,7 +279,7 @@ function BulkUploadTab() {
         <div className="flex items-center justify-between rounded-md bg-muted px-4 py-3">
           <div>
             <p className="text-sm font-medium text-foreground">Need the format?</p>
-            <p className="text-xs text-muted-foreground">name, contact, email, city, language, source, lead_date</p>
+            <p className="text-xs text-muted-foreground">name, contact, email, city, language, lead_date</p>
           </div>
           <Button variant="outline" size="sm" onClick={downloadSampleCsv}>
             <Download className="h-4 w-4" /> Download Sample CSV
@@ -281,9 +297,20 @@ function BulkUploadTab() {
         </div>
 
         <div>
+          <Label>Source</Label>
+          <Select value={source} onValueChange={setSource}>
+            <SelectTrigger><SelectValue placeholder="Select source" /></SelectTrigger>
+            <SelectContent>
+              {(sourcesQ.data?.sources ?? []).map((s) => <SelectItem key={s.source_name} value={s.source_name}>{s.source_name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div>
           <Label>CSV File</Label>
           <Input ref={fileInputRef} type="file" accept=".csv,text/csv" onChange={onFile} />
           {fileName && <p className="mt-1 text-xs text-muted-foreground">{fileName} — {rows.length} row{rows.length === 1 ? "" : "s"} parsed</p>}
+          {csvSourceError && <p className="mt-2 text-xs text-destructive">{csvSourceError}</p>}
           {parseErrors.length > 0 && (
             <div className="mt-2 space-y-1 text-xs text-destructive">
               {parseErrors.map((e, i) => <div key={i}>{e}</div>)}
@@ -291,7 +318,7 @@ function BulkUploadTab() {
           )}
         </div>
 
-        <Button onClick={upload} disabled={busy || rows.length === 0} className="w-full">
+        <Button onClick={upload} disabled={busy || rows.length === 0 || !source} className="w-full">
           {busy ? "Uploading…" : (
             <>
               <Upload className="h-4 w-4" /> Upload {rows.length > 0 ? `${rows.length} Lead${rows.length === 1 ? "" : "s"}` : "Leads"}

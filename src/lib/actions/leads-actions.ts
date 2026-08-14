@@ -681,7 +681,6 @@ const BulkRowSchema = z.object({
   email: z.string().max(255).nullish(),
   city: z.string().max(200).nullish(),
   language: z.string().max(100).nullish(),
-  source: z.string().min(1).max(200),
   lead_date: z.string().nullish(),
 });
 
@@ -692,14 +691,15 @@ export async function bulkAddLeads(input: {
     email?: string | null;
     city?: string | null;
     language?: string | null;
-    source: string;
     lead_date?: string | null;
   }>;
+  source: string;
   assigned_telecaller_email?: string | null;
 }) {
   const data = z
     .object({
       rows: z.array(BulkRowSchema).min(1).max(1000),
+      source: z.string().min(1).max(200),
       assigned_telecaller_email: z.string().email().max(255).nullish(),
     })
     .parse(input);
@@ -753,10 +753,10 @@ export async function bulkAddLeads(input: {
         await logDuplicate({
           incoming_name: row.name,
           incoming_contact: normalized,
-          incoming_source: row.source,
+          incoming_source: data.source,
           matched_lead_id: dedup.match!.id,
           detected_by: u.email,
-          payload: { ...row, contact: normalized, assigned_telecaller_email: telecaller },
+          payload: { ...row, contact: normalized, source: data.source, assigned_telecaller_email: telecaller },
         });
         duplicates.push({
           row: rowNum,
@@ -768,14 +768,14 @@ export async function bulkAddLeads(input: {
         });
         continue;
       }
-      const priority = await resolvePriority(row.source, null);
+      const priority = await resolvePriority(data.source, null);
       await insertLeadRow({
         name: row.name,
         contact: normalized,
         email: row.email,
         city: row.city,
         language: row.language,
-        source: row.source,
+        source: data.source,
         priority,
         lead_date: row.lead_date ?? new Date().toISOString().slice(0, 10),
         assigned_telecaller_email: telecaller,
