@@ -120,7 +120,7 @@ const STAGES = [
   "calling_pending", "round_1_pending", "round_2_pending", "round_3_pending", "round_4_pending",
   "profile_creation_pending", "profile_created", "active", "failed", "junk", "not_interested",
 ];
-const STATUSES = ["connected", "rnr", "reconnect", "junk", "not_interested"];
+const STATUSES = ["connected", "rnr", "reconnect", "junk", "not_interested", "failed", "dropped_off"];
 const VERDICTS = ["Passed", "Failed", "Pending"];
 type SortKey = "lead_date" | "priority" | "stage" | "updated";
 type DateDir = "asc" | "desc";
