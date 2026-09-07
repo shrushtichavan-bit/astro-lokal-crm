@@ -10,7 +10,7 @@ export async function appendAudit(leadId: string, action: string, performedBy: s
 }
 
 /** Stages that count as "closed" for dedup cooldown purposes — see [[dedup.ts]]. */
-export const TERMINAL_STAGES = ["failed", "junk", "not_interested", "terminated"] as const;
+export const TERMINAL_STAGES = ["failed", "junk", "not_interested", "terminated", "dropped_off"] as const;
 
 export async function transitionLead(
   leadId: string,

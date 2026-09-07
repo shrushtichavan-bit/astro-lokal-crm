@@ -54,5 +54,6 @@ export function stageToPill(stage: string): { kind: StatusKind; label: string } 
   if (stage === "failed") return { kind: "failed", label: "Failed" };
   if (stage === "junk") return { kind: "junk", label: "Junk" };
   if (stage === "not_interested") return { kind: "not_interested", label: "Not Interested" };
+  if (stage === "dropped_off") return { kind: "not_interested", label: "Dropped Off" };
   return { kind: "neutral", label: stage };
 }
