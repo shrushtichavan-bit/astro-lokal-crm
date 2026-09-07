@@ -445,6 +445,22 @@ export async function submitRound(input: {
   }
 
   if (!isLastRound) {
+    if (data.round_number === 1) {
+      if (!data.next_owner_email) throw new Error("Select who creates the expert profile before submitting");
+      const target = data.next_owner_email.toLowerCase();
+      const creationPool = await poolMembers("expert_creation");
+      if (!creationPool.includes(target)) throw new Error("Selected person is not in the Expert Creation pool");
+      await pool.query(
+        `UPDATE interview_rounds SET passed = true, next_owner_email = $1 WHERE lead_id = $2 AND round_number = $3`,
+        [target, lead.id, data.round_number],
+      );
+      await recordStageAssignment(lead.id, "expert_creation", target, u.email);
+      await transitionLead(lead.id, "profile_creation_pending", target, u.email, {
+        round_number: data.round_number,
+        total_score: total,
+      });
+      return { ok: true, total_score: total, verdict: "passed" as const };
+    }
     const nextStageKey = `round_${data.round_number + 1}`;
     if (!data.next_owner_email) throw new Error(`Select who takes Round ${data.round_number + 1} before submitting`);
     const target = data.next_owner_email.toLowerCase();
@@ -484,12 +500,14 @@ export async function submitRound(input: {
   ]);
 
   if (passed) {
-    if (!data.next_owner_email) throw new Error("Select who creates the expert profile before submitting");
-    const target = data.next_owner_email.toLowerCase();
-    const creationPool = await poolMembers("expert_creation");
-    if (!creationPool.includes(target)) throw new Error("Selected person is not in the Expert Creation pool");
-    await recordStageAssignment(lead.id, "expert_creation", target, u.email);
-    await transitionLead(lead.id, "profile_creation_pending", target, u.email, { verdict: "passed", total_score: total });
+    await pool.query(
+      `UPDATE interview_rounds SET passed = true WHERE lead_id = $1 AND round_number = $2`,
+      [lead.id, data.round_number],
+    );
+    await transitionLead(lead.id, "profile_created", lead.current_owner_email ?? u.email, u.email, {
+      verdict: "passed",
+      total_score: total,
+    });
     return { ok: true, total_score: total, verdict: "passed" as const };
   } else {
     await transitionLead(lead.id, "failed", lead.current_owner_email ?? u.email, u.email, { verdict: "failed", total_score: total });
@@ -499,9 +517,13 @@ export async function submitRound(input: {
 
 // ---------- Expert creation ----------
 
-export async function linkExpertProfile(input: { lead_id: string; expert_id: string }) {
+export async function linkExpertProfile(input: { lead_id: string; expert_id: string; next_owner_email?: string | null }) {
   const data = z
-    .object({ lead_id: z.string().uuid(), expert_id: z.string().min(1).max(200) })
+    .object({
+      lead_id: z.string().uuid(),
+      expert_id: z.string().min(1).max(200),
+      next_owner_email: z.string().email().max(255).nullish(),
+    })
     .parse(input);
   const u = await requireUser();
   const lead = await loadLeadOwned(data.lead_id, u.email);
@@ -514,7 +536,22 @@ export async function linkExpertProfile(input: { lead_id: string; expert_id: str
        expert_id = EXCLUDED.expert_id, linked_by = EXCLUDED.linked_by, is_active = EXCLUDED.is_active`,
     [lead.id, data.expert_id, u.email],
   );
-  await transitionLead(lead.id, "profile_created", lead.current_owner_email ?? u.email, u.email, { expert_id: data.expert_id });
+
+  const { num_rounds } = await loadRoundConfig();
+
+  if (num_rounds <= 1) {
+    await transitionLead(lead.id, "profile_created", lead.current_owner_email ?? u.email, u.email, {
+      expert_id: data.expert_id,
+    });
+  } else {
+    if (!data.next_owner_email) throw new Error("Select who takes Round 2 before linking the profile");
+    const target = data.next_owner_email.toLowerCase();
+    const round2Pool = await poolMembers("round_2");
+    if (!round2Pool.includes(target)) throw new Error("Selected person is not in the Round 2 pool");
+    await recordStageAssignment(lead.id, "round_2", target, u.email);
+    await transitionLead(lead.id, "round_2_pending", target, u.email, { expert_id: data.expert_id });
+  }
+
   return { ok: true };
 }
 

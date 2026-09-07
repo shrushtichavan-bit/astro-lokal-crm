@@ -229,13 +229,12 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
     ),
   });
 
-  for (let n = 1; n <= numRounds; n++) {
+  // Round 1
+  {
+    const n = 1;
     const round = rounds.find((r) => r.round_number === n);
-    const stageKey = `round_${n}`;
-    const isCurrentStage = lead.current_stage === `${stageKey}_pending`;
-    // Same reasoning as calling above: while this round is the live stage,
-    // current_owner_email is the authoritative owner, not the (possibly
-    // stale) lead_stage_assignments row.
+    const stageKey = "round_1";
+    const isCurrentStage = lead.current_stage === "round_1_pending";
     const assignedTo = isCurrentStage ? lead.current_owner_email : assignedByStage.get(stageKey);
     let state: TimelineState;
     let pill: StatusKind;
@@ -245,28 +244,105 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
       pill = round.passed === true ? "passed" : round.passed === false ? "failed" : "pending";
       pillLabel = round.passed === true ? "Passed" : round.passed === false ? "Failed" : "Submitted";
     } else if (isCurrentStage) {
-      state = "current";
-      pill = "pending";
-      pillLabel = "In progress";
+      state = "current"; pill = "pending"; pillLabel = "In progress";
     } else {
-      state = "future";
-      pill = "neutral";
-      pillLabel = "Not started";
+      state = "future"; pill = "neutral"; pillLabel = "Not started";
+    }
+    items.push({
+      id: stageKey,
+      title: "Round 1",
+      subtitle: round?.submitted_at ? fmtDateTime(round.submitted_at) : "",
+      state, pill, pillLabel,
+      assignedTo: nameOf(assignedTo) ?? null,
+      details: (
+        <div className="space-y-1 text-sm text-muted-foreground">
+          <div>Conducted by: <span className="font-medium text-foreground">{nameOf(round?.conducted_by) ?? nameOf(assignedTo) ?? "Not started yet"}</span></div>
+          {state === "current" && (round?.conducted_by ?? assignedTo) && (
+            <ReassignControl leadId={lead.id} stage={stageKey} currentEmail={round?.conducted_by ?? assignedTo} onChanged={onChanged} />
+          )}
+          {state === "done" && (
+            <RetakeControl leadId={lead.id} stage={stageKey} stageLabel="Round 1" onChanged={onChanged} />
+          )}
+          {round?.total_score != null && <div>Score: <span className="font-medium text-foreground">{round.total_score}</span></div>}
+          {round?.remarks && <div>Notes: {round.remarks}</div>}
+        </div>
+      ),
+    });
+  }
+
+  // Expert Creation (now between Round 1 and Round 2)
+  {
+    const isExpertCreationCurrentStage = lead.current_stage === "profile_creation_pending";
+    const assignedCreation = isExpertCreationCurrentStage ? lead.current_owner_email : assignedByStage.get("expert_creation");
+    let creationState: TimelineState;
+    let creationPill: StatusKind;
+    let creationLabel: string;
+    if (lead.current_stage === "active") {
+      creationState = "done"; creationPill = "active"; creationLabel = "Active";
+    } else if (profile && lead.current_stage !== "round_2_pending") {
+      creationState = "done"; creationPill = "inactive"; creationLabel = "Profile Created";
+    } else if (profile && lead.current_stage === "round_2_pending") {
+      creationState = "done"; creationPill = "inactive"; creationLabel = "Profile Created";
+    } else if (isExpertCreationCurrentStage) {
+      creationState = "current"; creationPill = "pending"; creationLabel = "In progress";
+    } else {
+      creationState = "future"; creationPill = "neutral"; creationLabel = "Not started";
+    }
+    items.push({
+      id: "expert_creation",
+      title: "Expert Creation",
+      subtitle: profile?.linked_at ? fmtDateTime(profile.linked_at) : "",
+      state: creationState,
+      pill: creationPill,
+      pillLabel: creationLabel,
+      assignedTo: nameOf(assignedCreation) ?? null,
+      details: (
+        <div className="space-y-1 text-sm text-muted-foreground">
+          <div>
+            Assigned to:{" "}
+            <span className="font-medium text-foreground">{nameOf(profile?.linked_by) ?? nameOf(assignedCreation) ?? "Not started yet"}</span>
+          </div>
+          {creationState === "current" && (profile?.linked_by ?? assignedCreation) && (
+            <ReassignControl
+              leadId={lead.id}
+              stage="expert_creation"
+              currentEmail={profile?.linked_by ?? assignedCreation}
+              onChanged={onChanged}
+            />
+          )}
+          {profile && <div>Expert ID: <span className="font-mono text-foreground">{profile.expert_id}</span></div>}
+        </div>
+      ),
+    });
+  }
+
+  // Rounds 2..N
+  for (let n = 2; n <= numRounds; n++) {
+    const round = rounds.find((r) => r.round_number === n);
+    const stageKey = `round_${n}`;
+    const isCurrentStage = lead.current_stage === `${stageKey}_pending`;
+    const assignedTo = isCurrentStage ? lead.current_owner_email : assignedByStage.get(stageKey);
+    let state: TimelineState;
+    let pill: StatusKind;
+    let pillLabel: string;
+    if (round?.submitted_at) {
+      state = "done";
+      pill = round.passed === true ? "passed" : round.passed === false ? "failed" : "pending";
+      pillLabel = round.passed === true ? "Passed" : round.passed === false ? "Failed" : "Submitted";
+    } else if (isCurrentStage) {
+      state = "current"; pill = "pending"; pillLabel = "In progress";
+    } else {
+      state = "future"; pill = "neutral"; pillLabel = "Not started";
     }
     items.push({
       id: stageKey,
       title: `Round ${n}`,
       subtitle: round?.submitted_at ? fmtDateTime(round.submitted_at) : "",
-      state,
-      pill,
-      pillLabel,
+      state, pill, pillLabel,
       assignedTo: nameOf(assignedTo) ?? null,
       details: (
         <div className="space-y-1 text-sm text-muted-foreground">
-          <div>
-            Conducted by:{" "}
-            <span className="font-medium text-foreground">{nameOf(round?.conducted_by) ?? nameOf(assignedTo) ?? "Not started yet"}</span>
-          </div>
+          <div>Conducted by: <span className="font-medium text-foreground">{nameOf(round?.conducted_by) ?? nameOf(assignedTo) ?? "Not started yet"}</span></div>
           {state === "current" && (round?.conducted_by ?? assignedTo) && (
             <ReassignControl leadId={lead.id} stage={stageKey} currentEmail={round?.conducted_by ?? assignedTo} onChanged={onChanged} />
           )}
@@ -279,58 +355,6 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
       ),
     });
   }
-
-  const isExpertCreationCurrentStage = lead.current_stage === "profile_creation_pending";
-  // Same reasoning as calling/rounds above: while this is the live stage
-  // and no profile has been linked yet, current_owner_email is the
-  // authoritative owner, not the (possibly stale) lead_stage_assignments row.
-  const assignedCreation = isExpertCreationCurrentStage ? lead.current_owner_email : assignedByStage.get("expert_creation");
-  let creationState: TimelineState;
-  let creationPill: StatusKind;
-  let creationLabel: string;
-  if (lead.current_stage === "active") {
-    creationState = "done";
-    creationPill = "active";
-    creationLabel = "Active";
-  } else if (profile) {
-    creationState = "done";
-    creationPill = "inactive";
-    creationLabel = "Profile Created";
-  } else if (isExpertCreationCurrentStage) {
-    creationState = "current";
-    creationPill = "pending";
-    creationLabel = "In progress";
-  } else {
-    creationState = "future";
-    creationPill = "neutral";
-    creationLabel = "Not started";
-  }
-  items.push({
-    id: "expert_creation",
-    title: "Expert Creation",
-    subtitle: profile?.activated_at ? fmtDateTime(profile.activated_at) : "",
-    state: creationState,
-    pill: creationPill,
-    pillLabel: creationLabel,
-    assignedTo: nameOf(assignedCreation) ?? null,
-    details: (
-      <div className="space-y-1 text-sm text-muted-foreground">
-        <div>
-          Assigned to:{" "}
-          <span className="font-medium text-foreground">{nameOf(profile?.linked_by) ?? nameOf(assignedCreation) ?? "Not started yet"}</span>
-        </div>
-        {creationState === "current" && (profile?.linked_by ?? assignedCreation) && (
-          <ReassignControl
-            leadId={lead.id}
-            stage="expert_creation"
-            currentEmail={profile?.linked_by ?? assignedCreation}
-            onChanged={onChanged}
-          />
-        )}
-        {profile && <div>Expert ID: <span className="font-mono text-foreground">{profile.expert_id}</span></div>}
-      </div>
-    ),
-  });
 
   return (
     <div className="space-y-2">
@@ -690,9 +714,14 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
   const startQ = useQuery({ queryKey: ["round-questions", lead.id, round], queryFn: () => startRound({ lead_id: lead.id, round_number: round }) });
   const numRounds = data.cfg.num_rounds;
   const isLastRound = round >= numRounds;
-  const nextStageKey = isLastRound ? "expert_creation" : `round_${round + 1}`;
-  const nextStageLabel = isLastRound ? "Expert Creation" : `Round ${round + 1}`;
-  const nextPoolQ = useQuery({ queryKey: ["pool", nextStageKey], queryFn: () => getPool({ stage: nextStageKey }), staleTime: 5 * 60_000 });
+  const nextStageKey: string | null = round === 1 ? "expert_creation" : isLastRound ? null : `round_${round + 1}`;
+  const nextStageLabel: string | null = round === 1 ? "Expert Creation" : isLastRound ? null : `Round ${round + 1}`;
+  const nextPoolQ = useQuery({
+    queryKey: ["pool", nextStageKey ?? "expert_creation"],
+    queryFn: () => getPool({ stage: (nextStageKey ?? "expert_creation") as Parameters<typeof getPool>[0]["stage"] }),
+    staleTime: 5 * 60_000,
+    enabled: nextStageKey !== null,
+  });
   const nextPool = nextPoolQ.data?.members ?? [];
   const nextNames = nextPoolQ.data?.names ?? {};
 
@@ -712,7 +741,7 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
       toast.warning("Grade every question before submitting.");
       return;
     }
-    if (!nextOwner) {
+    if (nextStageKey && !nextOwner) {
       toast.warning(`Select who takes ${nextStageLabel} before submitting.`);
       return;
     }
@@ -723,14 +752,16 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
         round_number: round,
         grades: questions.map((q) => ({ question_id: q.question_id, question_text_used: q.question_text, grade: grades[q.question_id] ?? 0 })),
         remarks: remarks || null,
-        next_owner_email: nextOwner,
+        next_owner_email: nextStageKey ? nextOwner : null,
       });
       queryClient.invalidateQueries({ queryKey: ["dashboard-pipeline-snapshot"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-admin-extras"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-activity"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-pool"] });
       setVerdict({ verdict: r.verdict ?? null, total: r.total_score ?? 0 });
-      if (r.verdict === "passed") toast.success(`Round ${round} passed. Moving to ${nextStageLabel}.`);
+      if (r.verdict === "passed") {
+        toast.success(nextStageLabel ? `Round ${round} passed. Moving to ${nextStageLabel}.` : `Round ${round} passed. Lead completed.`);
+      }
       else if (r.verdict === "failed") toast.error(`Round ${round} not passed.`);
       else toast.success(`Round ${round} saved.`);
       onChanged();
@@ -814,24 +845,26 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
           <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={3} />
         </div>
 
-        <div className="mt-6 space-y-1.5">
-          <Label>Who takes {nextStageLabel} if they pass?</Label>
-          <Select value={nextOwner} onValueChange={setNextOwner}>
-            <SelectTrigger><SelectValue placeholder="Select person" /></SelectTrigger>
-            <SelectContent>
-              {nextPool.map((m) => <SelectItem key={m} value={m}>{nextNames[m] ?? m}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          {nextPool.length === 0 && (
-            <p className="text-xs text-destructive">No one is in the {nextStageLabel} pool yet — contact admin.</p>
-          )}
-        </div>
+        {nextStageKey !== null && (
+          <div className="mt-6 space-y-1.5">
+            <Label>Who takes {nextStageLabel} if they pass?</Label>
+            <Select value={nextOwner} onValueChange={setNextOwner}>
+              <SelectTrigger><SelectValue placeholder="Select person" /></SelectTrigger>
+              <SelectContent>
+                {nextPool.map((m) => <SelectItem key={m} value={m}>{nextNames[m] ?? m}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {nextPool.length === 0 && (
+              <p className="text-xs text-destructive">No one is in the {nextStageLabel} pool yet — contact admin.</p>
+            )}
+          </div>
+        )}
 
         {questions.length > 0 && (
           <div className="mt-6 text-xs text-muted-foreground">{graded} of {questions.length} questions graded</div>
         )}
 
-        <Button onClick={submit} disabled={busy || !allGraded || !nextOwner} className="mt-4 w-full">
+        <Button onClick={submit} disabled={busy || !allGraded || (nextStageKey !== null && !nextOwner)} className="mt-4 w-full">
           {busy ? "Submitting…" : `Submit Round ${round}`}
         </Button>
       </CardContent>
@@ -843,23 +876,36 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
 
 function ProfileActions({ data, onChanged }: { data: LeadData; onChanged: () => void }) {
   const { lead } = data;
+  const numRounds = data.cfg.num_rounds;
   const [expertId, setExpertId] = React.useState("");
+  const [nextOwner, setNextOwner] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const queryClient = useQueryClient();
 
+  const round2PoolQ = useQuery({
+    queryKey: ["pool", "round_2"],
+    queryFn: () => getPool({ stage: "round_2" }),
+    staleTime: 5 * 60_000,
+    enabled: numRounds > 1,
+  });
+  const round2Pool = round2PoolQ.data?.members ?? [];
+  const round2Names = round2PoolQ.data?.names ?? {};
+
   async function submit() {
-    if (!expertId.trim()) {
-      toast.warning("Enter an expert ID first.");
-      return;
-    }
+    if (!expertId.trim()) { toast.warning("Enter an expert ID first."); return; }
+    if (numRounds > 1 && !nextOwner) { toast.warning("Select who takes Round 2 before linking."); return; }
     setBusy(true);
     try {
-      await linkExpertProfile({ lead_id: lead.id, expert_id: expertId.trim() });
+      await linkExpertProfile({
+        lead_id: lead.id,
+        expert_id: expertId.trim(),
+        next_owner_email: numRounds > 1 ? nextOwner : null,
+      });
       queryClient.invalidateQueries({ queryKey: ["dashboard-pipeline-snapshot"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-admin-extras"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-activity"] });
       queryClient.invalidateQueries({ queryKey: ["dashboard-pool"] });
-      toast.success("Expert profile linked.");
+      toast.success(numRounds > 1 ? "Expert profile linked. Moving to Round 2." : "Expert profile linked.");
       onChanged();
     } catch (e) {
       toast.error("Something went wrong.", { description: (e as Error).message });
@@ -872,10 +918,32 @@ function ProfileActions({ data, onChanged }: { data: LeadData; onChanged: () => 
     <Card>
       <CardContent className="p-6">
         <p className="text-base font-semibold text-foreground">Link the expert profile</p>
-        <p className="mt-1 text-sm text-muted-foreground">Create the expert profile in the AstroLokal app, then enter its ID below.</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Create the expert profile in the AstroLokal app, then enter its ID below.
+        </p>
         <div className="mt-4 space-y-3">
           <Input value={expertId} onChange={(e) => setExpertId(e.target.value)} placeholder="Expert ID" />
-          <Button disabled={busy || !expertId.trim()} onClick={submit} className="w-full">
+          {numRounds > 1 && (
+            <div className="space-y-1.5">
+              <Label>Who takes Round 2?</Label>
+              <Select value={nextOwner} onValueChange={setNextOwner}>
+                <SelectTrigger><SelectValue placeholder="Select person" /></SelectTrigger>
+                <SelectContent>
+                  {round2Pool.map((m) => (
+                    <SelectItem key={m} value={m}>{round2Names[m] ?? m}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!round2PoolQ.isLoading && round2Pool.length === 0 && (
+                <p className="text-xs text-destructive">No one is in the Round 2 pool yet — contact admin.</p>
+              )}
+            </div>
+          )}
+          <Button
+            disabled={busy || !expertId.trim() || (numRounds > 1 && !nextOwner)}
+            onClick={submit}
+            className="w-full"
+          >
             {busy ? "Linking…" : "Link and mark profile created"}
           </Button>
         </div>
