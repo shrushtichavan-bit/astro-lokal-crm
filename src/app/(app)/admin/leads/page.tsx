@@ -118,7 +118,7 @@ function ExpertCreationCell({ slot }: { slot: ExpertCreationSlot }) {
 
 const STAGES = [
   "calling_pending", "round_1_pending", "round_2_pending", "round_3_pending", "round_4_pending",
-  "profile_creation_pending", "profile_created", "active", "failed", "junk", "not_interested",
+  "profile_creation_pending", "profile_created", "active", "failed", "junk", "not_interested", "dropped_off",
 ];
 const STATUSES = ["connected", "rnr", "reconnect", "junk", "not_interested", "failed", "dropped_off"];
 const VERDICTS = ["Passed", "Failed", "Pending"];
