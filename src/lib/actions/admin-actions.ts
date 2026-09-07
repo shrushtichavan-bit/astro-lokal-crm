@@ -672,7 +672,7 @@ async function enrichLeads(leads: Array<Record<string, unknown>>, numRounds: num
 
 export async function listAllLeads(input: AllLeadsFilterT) {
   const f = AllLeadsFilter.parse(input);
-  await requireRole(["admin", "kam", "lma"]);
+  await requireRole(["admin", "kam", "lma", "telecaller"]);
   const numRounds = await loadNumRounds();
   const limit = f.limit ?? 100;
   const { leads, total } = await queryLeadsPage(f, limit);

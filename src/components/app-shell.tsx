@@ -67,9 +67,10 @@ const LMA_NAV: NavItem[] = [
   { href: "/admin/leads", label: "All Leads", icon: Users2 },
   { href: "/admin/leads/add", label: "Add Lead", icon: UserPlus },
 ];
-// Telecaller: calling attempts only. Access: dashboard, add lead.
+// Telecaller: calling attempts only. Access: dashboard, all leads, add lead.
 const TELECALLER_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/admin/leads", label: "All Leads", icon: Users2 },
   { href: "/admin/leads/add", label: "Add Lead", icon: UserPlus },
 ];
 
