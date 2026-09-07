@@ -10,6 +10,7 @@ import {
   getAssignedTelecallerLeads,
   getAssignedLeadIds,
   assignTelecallerBulk,
+  assignTelecallerBulkSplit,
 } from "@/lib/actions/assignments-actions";
 import { listActiveSources } from "@/lib/actions/sources-actions";
 import { getPool } from "@/lib/actions/leads-actions";
@@ -39,6 +40,14 @@ const PRIORITY_OPTIONS = [1, 2, 3, 4, 5, 99];
 function formatContact(c: string): string {
   const digits = (c ?? "").replace(/\D/g, "");
   return digits.length === 10 ? `${digits.slice(0, 5)} ${digits.slice(5)}` : c;
+}
+
+/** Distributes `total` leads across `n` telecallers as evenly as possible — the remainder goes to the first buckets. */
+function computeEqualCounts(total: number, n: number): number[] {
+  if (n <= 0) return [];
+  const base = Math.floor(total / n);
+  const remainder = total % n;
+  return Array.from({ length: n }, (_, i) => base + (i < remainder ? 1 : 0));
 }
 
 function MultiSelectFilter({
@@ -268,7 +277,8 @@ function UnassignedTab() {
   const filterState = useAllotmentFilters();
   const [page, setPage] = React.useState(0);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
-  const [assignTo, setAssignTo] = React.useState("");
+  const [splits, setSplits] = React.useState<Array<{ telecaller_email: string; count: number }>>([]);
+  const [splitMode, setSplitMode] = React.useState<"equal" | "custom">("equal");
   const [busy, setBusy] = React.useState(false);
   const [expanding, setExpanding] = React.useState(false);
 
@@ -328,17 +338,52 @@ function UnassignedTab() {
     }
   }
 
-  async function assign() {
-    if (!assignTo) {
-      toast.warning("Select a telecaller first.");
-      return;
-    }
+  const equalCounts = React.useMemo(() => computeEqualCounts(selected.size, splits.length), [selected.size, splits.length]);
+  const customTotal = splits.reduce((sum, s) => sum + (s.count || 0), 0);
+  const missingTelecaller = splits.some((s) => !s.telecaller_email);
+  const countsMismatch = splitMode === "custom" && customTotal !== selected.size;
+  const assignDisabled = busy || splits.length === 0 || missingTelecaller || countsMismatch;
+
+  function addTelecallerRow() {
+    if (splits.length >= 5) return;
+    setSplits((prev) => [...prev, { telecaller_email: "", count: 0 }]);
+  }
+  function removeTelecallerRow(i: number) {
+    setSplits((prev) => prev.filter((_, idx) => idx !== i));
+  }
+  function updateSplitTelecaller(i: number, email: string) {
+    setSplits((prev) => prev.map((s, idx) => (idx === i ? { ...s, telecaller_email: email } : s)));
+  }
+  function updateSplitCount(i: number, count: number) {
+    setSplits((prev) => prev.map((s, idx) => (idx === i ? { ...s, count } : s)));
+  }
+  function clearSelection() {
+    setSelected(new Set());
+    setSplits([]);
+  }
+
+  async function assignSplit() {
     setBusy(true);
     try {
-      const r = await assignTelecallerBulk({ lead_ids: Array.from(selected), telecaller_email: assignTo });
+      const counts = splitMode === "equal" ? equalCounts : splits.map((s) => s.count);
+      const ids = Array.from(selected);
+      let offset = 0;
+      const payload = splits
+        .map((s, i) => {
+          const c = counts[i] ?? 0;
+          const lead_ids = ids.slice(offset, offset + c);
+          offset += c;
+          return { telecaller_email: s.telecaller_email, lead_ids };
+        })
+        .filter((s) => s.lead_ids.length > 0);
+      if (payload.length === 0) {
+        toast.warning("Each telecaller needs at least one lead.");
+        return;
+      }
+      const r = await assignTelecallerBulkSplit({ splits: payload });
       toast.success(`${r.count} lead${r.count === 1 ? "" : "s"} assigned.`);
       setSelected(new Set());
-      setAssignTo("");
+      setSplits([]);
       qc.invalidateQueries({ queryKey: ["admin-unassigned-leads"] });
       qc.invalidateQueries({ queryKey: ["admin-assigned-leads"] });
     } catch (e) {
@@ -403,22 +448,90 @@ function UnassignedTab() {
 
       {selected.size > 0 && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-card px-6 py-4 shadow-lg md:left-64">
-          <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-3">
-            <span className="text-sm font-medium text-foreground">{selected.size} lead{selected.size === 1 ? "" : "s"} selected</span>
-            <Select value={assignTo} onValueChange={setAssignTo}>
-              <SelectTrigger className="w-64"><SelectValue placeholder="Select telecaller" /></SelectTrigger>
-              <SelectContent>
-                {telecallers.map((email) => <SelectItem key={email} value={email}>{telecallerNames[email] ?? email}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <Button onClick={assign} disabled={busy}>{busy ? "Assigning…" : "Assign"}</Button>
-            <button
-              type="button"
-              onClick={() => setSelected(new Set())}
-              className="text-sm text-muted-foreground hover:text-foreground hover:underline"
-            >
-              Clear selection
-            </button>
+          <div className="mx-auto max-w-5xl space-y-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm font-medium text-foreground">{selected.size} lead{selected.size === 1 ? "" : "s"} selected</span>
+              <div className="flex overflow-hidden rounded-md border border-input">
+                <button
+                  type="button"
+                  onClick={() => setSplitMode("equal")}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${splitMode === "equal" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-accent"}`}
+                >
+                  Equal
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSplitMode("custom")}
+                  className={`px-3 py-1.5 text-sm font-medium transition-colors ${splitMode === "custom" ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:bg-accent"}`}
+                >
+                  Custom
+                </button>
+              </div>
+              <Button variant="outline" size="sm" onClick={addTelecallerRow} disabled={splits.length >= 5}>
+                + Add telecaller
+              </Button>
+              <Button
+                onClick={assignSplit}
+                disabled={assignDisabled}
+                title={countsMismatch ? `Counts must add up to ${selected.size}` : undefined}
+              >
+                {busy ? "Assigning…" : "Assign"}
+              </Button>
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="text-sm text-muted-foreground hover:text-foreground hover:underline"
+              >
+                Clear selection
+              </button>
+            </div>
+
+            {splits.map((s, i) => {
+              const otherSelected = splits
+                .filter((_, idx) => idx !== i)
+                .map((sp) => sp.telecaller_email)
+                .filter(Boolean);
+              const equalCount = equalCounts[i] ?? 0;
+              return (
+                <div key={i} className="flex flex-wrap items-center gap-3">
+                  <Select value={s.telecaller_email} onValueChange={(v) => updateSplitTelecaller(i, v)}>
+                    <SelectTrigger className="w-64"><SelectValue placeholder="Select telecaller" /></SelectTrigger>
+                    <SelectContent>
+                      {telecallers.map((email) => (
+                        <SelectItem key={email} value={email} disabled={otherSelected.includes(email)}>
+                          {telecallerNames[email] ?? email}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {splitMode === "equal" ? (
+                    <span className="w-24 text-sm text-muted-foreground">
+                      {equalCount} lead{equalCount === 1 ? "" : "s"}
+                    </span>
+                  ) : (
+                    <Input
+                      type="number"
+                      min={0}
+                      value={s.count}
+                      onChange={(e) => updateSplitCount(i, parseInt(e.target.value, 10) || 0)}
+                      className="w-24"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => removeTelecallerRow(i)}
+                    aria-label="Remove telecaller"
+                    className="text-sm text-muted-foreground hover:text-destructive"
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+
+            {splitMode === "custom" && splits.length > 0 && (
+              <p className="text-xs text-muted-foreground">{customTotal} of {selected.size} assigned</p>
+            )}
           </div>
         </div>
       )}

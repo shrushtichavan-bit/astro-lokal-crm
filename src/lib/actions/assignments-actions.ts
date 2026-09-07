@@ -189,6 +189,36 @@ export async function assignTelecallerBulk(input: { lead_ids: string[]; telecall
   return { ok: true, count: data.lead_ids.length };
 }
 
+export async function assignTelecallerBulkSplit(input: {
+  splits: Array<{ telecaller_email: string; lead_ids: string[] }>;
+}) {
+  const data = z
+    .object({
+      splits: z
+        .array(
+          z.object({
+            telecaller_email: z.string().email().max(255),
+            lead_ids: z.array(z.string().uuid()).min(1),
+          }),
+        )
+        .min(1)
+        .max(10),
+    })
+    .parse(input);
+
+  await requireRole(["admin", "kam"]);
+
+  let total = 0;
+  for (const split of data.splits) {
+    const r = await assignTelecallerBulk({
+      lead_ids: split.lead_ids,
+      telecaller_email: split.telecaller_email,
+    });
+    total += r.count;
+  }
+  return { ok: true, count: total };
+}
+
 export async function getAssignmentCountsByStage() {
   await requireRole("admin");
   const { rows } = await pool.query<{ stage: string }>(`SELECT stage FROM lead_stage_assignments`);
