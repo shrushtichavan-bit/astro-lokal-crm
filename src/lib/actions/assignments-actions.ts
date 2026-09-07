@@ -26,8 +26,11 @@ function buildAllotmentWhere(f: AllotmentFiltersT, extraConditions: string[] = [
   const conditions = [...extraConditions];
   const params: unknown[] = [];
   if (f.sources && f.sources.length > 0) {
-    params.push(f.sources);
-    conditions.push(`source = ANY($${params.length}::text[])`);
+    const sourceConditions = f.sources.map((src) => {
+      params.push(src);
+      return `$${params.length} ILIKE '%' || source || '%'`;
+    });
+    conditions.push(`(${sourceConditions.join(" OR ")})`);
   }
   if (f.priority != null) {
     params.push(f.priority);
