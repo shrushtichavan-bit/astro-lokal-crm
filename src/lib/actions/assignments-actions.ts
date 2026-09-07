@@ -34,8 +34,11 @@ function buildAllotmentWhere(f: AllotmentFiltersT, extraConditions: string[] = [
     conditions.push(`priority = $${params.length}`);
   }
   if (f.languages && f.languages.length > 0) {
-    params.push(f.languages);
-    conditions.push(`language = ANY($${params.length}::text[])`);
+    const langConditions = f.languages.map((lang) => {
+      params.push(`%${lang}%`);
+      return `language ILIKE $${params.length}`;
+    });
+    conditions.push(`(${langConditions.join(" OR ")})`);
   }
   if (f.from) {
     params.push(f.from);

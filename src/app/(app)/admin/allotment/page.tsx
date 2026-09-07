@@ -33,7 +33,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
-const LANGUAGE_OPTIONS = ["Hindi", "Tamil", "Telugu", "Malayalam", "Kannada"].map((l) => ({ value: l, label: l }));
+const LANGUAGE_OPTIONS = ["Hindi", "Tamil", "Telugu", "Malayalam", "Kannada", "Bengali", "Marathi"].map((l) => ({ value: l, label: l }));
 const PRIORITY_OPTIONS = [1, 2, 3, 4, 5, 99];
 
 function formatContact(c: string): string {
