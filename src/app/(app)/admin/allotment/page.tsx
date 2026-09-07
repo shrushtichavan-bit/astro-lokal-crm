@@ -30,6 +30,7 @@ import {
   DropdownMenuContent,
   DropdownMenuCheckboxItem,
 } from "@/components/ui/dropdown-menu";
+import { Separator } from "@/components/ui/separator";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
 const LANGUAGE_OPTIONS = ["Hindi", "Tamil", "Telugu", "Malayalam", "Kannada"].map((l) => ({ value: l, label: l }));
@@ -54,6 +55,10 @@ function MultiSelectFilter({
   function toggle(v: string) {
     onChange(selected.includes(v) ? selected.filter((x) => x !== v) : [...selected, v]);
   }
+  const allSelected = options.length > 0 && options.every((o) => selected.includes(o.value));
+  function toggleAll() {
+    onChange(allSelected ? [] : options.map((o) => o.value));
+  }
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -64,6 +69,14 @@ function MultiSelectFilter({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-64 overflow-y-auto">
         {options.length === 0 && <div className="px-2 py-1.5 text-xs text-muted-foreground">No options</div>}
+        {options.length > 0 && (
+          <>
+            <DropdownMenuCheckboxItem checked={allSelected} onCheckedChange={toggleAll}>
+              All
+            </DropdownMenuCheckboxItem>
+            <Separator className="my-1" />
+          </>
+        )}
         {options.map((o) => (
           <DropdownMenuCheckboxItem key={o.value} checked={selected.includes(o.value)} onCheckedChange={() => toggle(o.value)}>
             {o.label}
