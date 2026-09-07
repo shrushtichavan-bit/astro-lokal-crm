@@ -1,15 +1,17 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Copy } from "lucide-react";
+import { Copy, Search } from "lucide-react";
 import { getDuplicateLog, forceAllowDuplicate } from "@/lib/actions/admin-actions";
 import { PageHeader } from "@/components/page-header";
 import { EmptyState } from "@/components/empty-state";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 
@@ -27,6 +29,17 @@ const REASON_LABELS: Record<string, string> = {
 export default function DuplicatesPage() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["admin-duplicates"], queryFn: () => getDuplicateLog() });
+  const [search, setSearch] = React.useState("");
+
+  const term = search.trim().toLowerCase();
+  const termDigits = term.replace(/\D/g, "");
+  const rows = q.data?.rows ?? [];
+  const filteredRows = rows.filter((r) => {
+    if (!term) return true;
+    if ((r.incoming_name ?? "").toLowerCase().includes(term)) return true;
+    if (termDigits) return r.incoming_contact.replace(/\D/g, "").includes(termDigits);
+    return r.incoming_contact.toLowerCase().includes(term);
+  });
 
   async function forceAllow(id: string) {
     try {
@@ -45,10 +58,21 @@ export default function DuplicatesPage() {
         title="Duplicates"
         description="Leads blocked because their contact number matched an existing lead still active, or closed within the cooldown window."
       />
+      <div className="relative mb-4">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by name or contact number…"
+          className="pl-9"
+        />
+      </div>
       {q.isLoading ? (
         <Skeleton className="h-64 w-full" />
-      ) : (q.data?.rows ?? []).length === 0 ? (
+      ) : rows.length === 0 ? (
         <EmptyState icon={Copy} title="No duplicates caught" description="Blocked leads from Add Lead and CSV bulk upload will show up here." />
+      ) : filteredRows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">No duplicates match your search.</p>
       ) : (
         <Card>
           <CardContent className="p-0 overflow-x-auto">
@@ -67,7 +91,7 @@ export default function DuplicatesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {(q.data?.rows ?? []).map((r) => (
+                {filteredRows.map((r) => (
                   <TableRow key={r.id}>
                     <TableCell>{r.incoming_name ?? "—"}</TableCell>
                     <TableCell className="tabular-nums">{r.incoming_contact}</TableCell>
