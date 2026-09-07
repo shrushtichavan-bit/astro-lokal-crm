@@ -24,6 +24,8 @@ const ATTEMPT_CHIP_LABELS: Record<string, string> = {
   reconnect: "Reconnect",
   junk: "Junk",
   not_interested: "Not Interested",
+  failed: "Failed",
+  dropped_off: "Dropped Off",
 };
 
 function formatLeadDate(dateStr: string | null): string {
@@ -39,7 +41,7 @@ function formatLeadDate(dateStr: string | null): string {
 function attemptChipClass(outcome: string): string {
   if (outcome === "connected") return "bg-success/10 text-success";
   if (outcome === "rnr" || outcome === "reconnect") return "bg-amber-100 text-amber-800";
-  if (outcome === "junk" || outcome === "not_interested") return "bg-destructive/10 text-destructive";
+  if (outcome === "junk" || outcome === "not_interested" || outcome === "failed" || outcome === "dropped_off") return "bg-destructive/10 text-destructive";
   return "bg-muted text-muted-foreground";
 }
 

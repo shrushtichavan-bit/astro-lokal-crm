@@ -8,6 +8,7 @@ export type StatusKind =
   | "not_interested"
   | "passed"
   | "failed"
+  | "dropped_off"
   | "pending"
   | "active"
   | "inactive"
@@ -21,6 +22,7 @@ const STYLES: Record<StatusKind, { className: string; label: string }> = {
   not_interested: { className: "bg-destructive/10 text-destructive", label: "Not Interested" },
   passed: { className: "bg-success/10 text-success", label: "Passed" },
   failed: { className: "bg-destructive/10 text-destructive", label: "Failed" },
+  dropped_off: { className: "bg-destructive/10 text-destructive", label: "Dropped Off" },
   pending: { className: "bg-amber-100 text-amber-800", label: "Pending" },
   active: { className: "bg-success/10 text-success", label: "Active" },
   inactive: { className: "bg-muted text-muted-foreground", label: "Inactive" },

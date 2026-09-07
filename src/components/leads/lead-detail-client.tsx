@@ -55,6 +55,8 @@ const OUTCOME_LABELS: Record<string, string> = {
   reconnect: "Reconnect",
   junk: "Junk",
   not_interested: "Not Interested",
+  failed: "Failed",
+  dropped_off: "Dropped Off",
 };
 
 export function LeadDetailClient({ id, userEmail }: { id: string; userEmail: string }) {
@@ -577,6 +579,8 @@ const CALLING_OPTIONS = [
   { value: "rnr", label: "RNR", desc: "Phone rang but no one answered." },
   { value: "junk", label: "Junk", desc: "Wrong number or fake lead." },
   { value: "not_interested", label: "Not Interested", desc: "They picked up but refused." },
+  { value: "failed", label: "Failed", desc: "They did not meet the criteria." },
+  { value: "dropped_off", label: "Dropped Off", desc: "They stopped responding." },
 ] as const;
 
 function CallingActions({ data, onChanged }: { data: LeadData; onChanged: () => void }) {
@@ -605,7 +609,7 @@ function CallingActions({ data, onChanged }: { data: LeadData; onChanged: () => 
     );
   }
 
-  const remarksRequired = outcome === "junk" || outcome === "not_interested";
+  const remarksRequired = outcome === "junk" || outcome === "not_interested" || outcome === "failed" || outcome === "dropped_off";
   const round1Pool = round1PoolQ.data?.members ?? [];
   const round1Names = round1PoolQ.data?.names ?? {};
 
@@ -627,7 +631,7 @@ function CallingActions({ data, onChanged }: { data: LeadData; onChanged: () => 
       await logCallOutcome({
         lead_id: lead.id,
         attempt_number: nextAttempt!,
-        outcome: outcome as "connected" | "rnr" | "reconnect" | "junk" | "not_interested",
+        outcome: outcome as "connected" | "rnr" | "reconnect" | "junk" | "not_interested" | "failed" | "dropped_off",
         remarks: remarks || null,
         next_owner_email: outcome === "connected" ? nextOwner : null,
       });

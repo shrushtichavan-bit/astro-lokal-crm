@@ -55,7 +55,7 @@ export async function listMyLeads() {
       const arr = (attemptsByLead.get(l.id) ?? []).sort((a, b) => a.n - b.n);
       attempts_logged = arr.length;
       const last = arr[arr.length - 1];
-      if (last && ["connected", "junk", "not_interested"].includes(last.outcome)) continue;
+      if (last && ["connected", "junk", "not_interested", "failed", "dropped_off"].includes(last.outcome)) continue;
       if (arr.length >= 3) continue;
       bucket = `calling_pending_${arr.length + 1}`;
     } else if (!l.current_stage.endsWith("_pending")) {
@@ -268,7 +268,7 @@ export async function logCallOutcome(input: {
     .object({
       lead_id: z.string().uuid(),
       attempt_number: z.number().int().min(1).max(3),
-      outcome: z.enum(["connected", "rnr", "reconnect", "junk", "not_interested"]),
+      outcome: z.enum(["connected", "rnr", "reconnect", "junk", "not_interested", "failed", "dropped_off"]),
       remarks: z.string().max(2000).nullish(),
       next_owner_email: z.string().email().max(255).nullish(),
     })
@@ -277,8 +277,11 @@ export async function logCallOutcome(input: {
   const u = await requireUser();
   const lead = await loadLeadOwned(data.lead_id, u.email);
   if (lead.current_stage !== "calling_pending") throw new Error("Lead is not in calling stage");
-  if ((data.outcome === "junk" || data.outcome === "not_interested") && !data.remarks?.trim())
-    throw new Error("Remarks are required for Junk or Not Interested outcomes");
+  if (
+    (data.outcome === "junk" || data.outcome === "not_interested" || data.outcome === "failed" || data.outcome === "dropped_off") &&
+    !data.remarks?.trim()
+  )
+    throw new Error("Remarks are required for Junk, Not Interested, Failed, or Dropped Off outcomes");
 
   const { rows: existing } = await pool.query<Pick<CallAttemptRow, "attempt_number" | "outcome" | "connected">>(
     `SELECT attempt_number, outcome, connected FROM call_attempts WHERE lead_id = $1 ORDER BY attempt_number`,
@@ -326,7 +329,7 @@ export async function logCallOutcome(input: {
   if (data.outcome === "connected") {
     await recordStageAssignment(lead.id, "round_1", assignedKam!, u.email);
     await transitionLead(lead.id, "round_1_pending", assignedKam!, u.email);
-  } else if (data.outcome === "junk" || data.outcome === "not_interested") {
+  } else if (data.outcome === "junk" || data.outcome === "not_interested" || data.outcome === "failed" || data.outcome === "dropped_off") {
     await transitionLead(lead.id, data.outcome, lead.current_owner_email ?? u.email, u.email);
   } else if (data.attempt_number >= 3) {
     // 3rd RNR/Reconnect — no attempts remain. Previously this just left the
