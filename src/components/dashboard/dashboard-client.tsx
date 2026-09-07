@@ -337,11 +337,25 @@ function RolePendingDoneDashboard({
   const q = useQuery({ queryKey: [queryKey, dateFilter], queryFn: () => queryFn(dateFilter), staleTime: 0, refetchInterval: 30_000 });
   const [openGroups, setOpenGroups] = React.useState<Record<string, boolean>>({});
   const [doneOpen, setDoneOpen] = React.useState(false);
+  const [search, setSearch] = React.useState("");
 
   const stats = q.data?.stats ?? [];
   const pendingGroups = q.data?.pendingGroups ?? [];
   const doneLeads = q.data?.doneLeads ?? [];
   const pendingTotal = q.data?.pendingTotal ?? 0;
+
+  const term = search.trim().toLowerCase();
+  const termDigits = term.replace(/\D/g, "");
+  function matchesSearch(l: LeadRow) {
+    if (!term) return true;
+    if (l.name.toLowerCase().includes(term)) return true;
+    if (termDigits) return l.contact.replace(/\D/g, "").includes(termDigits);
+    return l.contact.toLowerCase().includes(term);
+  }
+  const filteredPendingGroups = pendingGroups
+    .map((g) => ({ ...g, leads: g.leads.filter(matchesSearch) }))
+    .filter((g) => g.leads.length > 0);
+  const filteredDoneLeads = doneLeads.filter(matchesSearch);
 
   function isGroupOpen(key: string) {
     return openGroups[key] ?? true;
@@ -372,6 +386,15 @@ function RolePendingDoneDashboard({
         {q.isLoading ? "Loading…" : pendingTotal > 0 ? `${pendingTotal} lead${pendingTotal === 1 ? "" : "s"} need your attention` : "All caught up! Nothing assigned right now."}
       </p>
 
+      <div className="mb-4 max-w-sm">
+        <Label className="text-xs">Search</Label>
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by name or contact number…"
+        />
+      </div>
+
       <DateRangeFilter onApply={setDateFilter} />
 
       {q.isLoading ? (
@@ -389,11 +412,11 @@ function RolePendingDoneDashboard({
       {!q.isLoading && (
         <>
           <h2 className="mb-3 text-sm font-semibold text-foreground">Pending</h2>
-          {pendingGroups.length === 0 ? (
+          {filteredPendingGroups.length === 0 ? (
             <p className="mb-8 text-sm text-muted-foreground">Nothing pending in this range.</p>
           ) : (
             <div className="mb-8 space-y-3">
-              {pendingGroups.map((g) => (
+              {filteredPendingGroups.map((g) => (
                 <Card key={g.key}>
                   <button type="button" onClick={() => toggleGroup(g.key)} className="flex w-full items-center gap-2 px-4 py-3 text-left">
                     <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform", isGroupOpen(g.key) && "rotate-180")} />
@@ -411,16 +434,16 @@ function RolePendingDoneDashboard({
           )}
 
           <button type="button" onClick={() => setDoneOpen((v) => !v)} className="flex items-center gap-2 text-sm font-semibold text-foreground">
-            Done ({doneLeads.length})
+            Done ({filteredDoneLeads.length})
             <ChevronDown className={cn("h-4 w-4 transition-transform", doneOpen && "rotate-180")} />
           </button>
           {doneOpen && (
             <Card className="mt-3">
               <CardContent className="p-0">
-                {doneLeads.length === 0 ? (
+                {filteredDoneLeads.length === 0 ? (
                   <p className="p-4 text-sm text-muted-foreground">Nothing completed in this range.</p>
                 ) : (
-                  <LeadRowsTable leads={doneLeads} />
+                  <LeadRowsTable leads={filteredDoneLeads} />
                 )}
               </CardContent>
             </Card>
