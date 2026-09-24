@@ -6,6 +6,7 @@ import { requireRole } from "@/lib/auth";
 import { round1, poolMembers, describeAuditAction } from "@/lib/helpers";
 import { insertLeadRow, resolvePriority } from "@/lib/actions/leads-actions";
 import { normalizeContact } from "@/lib/dedup";
+import { loadStagePeople } from "@/lib/stage-people";
 import type { UserRow, DuplicateLogRow } from "@/lib/db-types";
 
 const FiltersSchema = z.object({
@@ -570,51 +571,7 @@ async function enrichLeads(leads: Array<Record<string, unknown>>, numRounds: num
   const ids = leads.map((l) => l.id as string);
   const roundNumbers = Array.from({ length: numRounds }, (_, i) => i + 1);
 
-  const [assignmentsRes, usersRes, attemptsRes, roundsRes, profilesRes] = await Promise.all([
-    pool.query<{ lead_id: string; stage: string; assigned_email: string }>(
-      `SELECT lead_id, stage, assigned_email FROM lead_stage_assignments WHERE lead_id = ANY($1::uuid[])`,
-      [ids],
-    ),
-    pool.query<Pick<UserRow, "email" | "name">>(`SELECT email, name FROM users`),
-    pool.query<{ lead_id: string; attempt_number: number; outcome: string | null; attempted_by: string }>(
-      `SELECT lead_id, attempt_number, outcome, attempted_by FROM call_attempts WHERE lead_id = ANY($1::uuid[])`,
-      [ids],
-    ),
-    pool.query<{ lead_id: string; round_number: number; passed: boolean | null; submitted_at: string | null; conducted_by: string }>(
-      `SELECT lead_id, round_number, passed, submitted_at, conducted_by FROM interview_rounds WHERE lead_id = ANY($1::uuid[]) AND round_number = ANY($2::int[])`,
-      [ids, roundNumbers],
-    ),
-    pool.query<{ lead_id: string; linked_by: string }>(
-      `SELECT lead_id, linked_by FROM expert_profiles WHERE lead_id = ANY($1::uuid[])`,
-      [ids],
-    ),
-  ]);
-
-  const nameByEmail = new Map(usersRes.rows.map((u) => [u.email, u.name]));
-  const resolve = (email: string | null | undefined) => (email ? (nameByEmail.get(email) ?? email) : "");
-
-  const chainBy = new Map<string, Record<string, string>>();
-  for (const a of assignmentsRes.rows) {
-    const m = chainBy.get(a.lead_id) ?? {};
-    m[a.stage] = a.assigned_email;
-    chainBy.set(a.lead_id, m);
-  }
-
-  const attemptsBy = new Map<string, Record<number, { outcome: string; attempted_by: string }>>();
-  for (const a of attemptsRes.rows) {
-    const m = attemptsBy.get(a.lead_id) ?? {};
-    m[a.attempt_number] = { outcome: a.outcome ?? "", attempted_by: a.attempted_by };
-    attemptsBy.set(a.lead_id, m);
-  }
-
-  const roundsBy = new Map<string, Record<number, { passed: boolean | null; submitted_at: string | null; conducted_by: string }>>();
-  for (const r of roundsRes.rows) {
-    const m = roundsBy.get(r.lead_id) ?? {};
-    m[r.round_number] = r;
-    roundsBy.set(r.lead_id, m);
-  }
-
-  const profileByLead = new Map(profilesRes.rows.map((p) => [p.lead_id, p]));
+  const { resolve, chainBy, attemptsBy, roundsBy, profileByLead } = await loadStagePeople(ids, roundNumbers);
 
   return leads.map((l) => {
     const id = l.id as string;

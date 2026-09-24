@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { pool } from "@/lib/db";
 import { requireRole, requireUser } from "@/lib/auth";
+import { loadStagePeople, previousStageFor, type PreviousStage } from "@/lib/stage-people";
 
 const DateFilterSchema = z.object({ from: z.string().nullish(), to: z.string().nullish() });
 type DateFilterT = z.infer<typeof DateFilterSchema>;
@@ -452,7 +453,27 @@ export async function getPoolDashboard(input: DateFilterT) {
     .filter((l): l is OwnedLead => Boolean(l));
 
   const pendingTotal = pendingGroups.reduce((s, g) => s + g.leads.length, 0);
-  return { pendingTotal, stats, pendingGroups, doneLeads, myStages };
+
+  // 5. "Previous Stage" column — who completed the stage right before each
+  // lead's current one (same source data as the All Leads table).
+  const listedIds = Array.from(new Set([...pendingGroups.flatMap((g) => g.leads.map((l) => l.id)), ...doneLeads.map((l) => l.id)]));
+  const { rows: cfgRows } = await pool.query<{ num_rounds: number }>(`SELECT num_rounds FROM round_config WHERE id = 1`);
+  const numRounds = cfgRows[0]?.num_rounds ?? 2;
+  const stagePeople = listedIds.length
+    ? await loadStagePeople(listedIds, Array.from({ length: numRounds }, (_, i) => i + 1))
+    : null;
+  const withPrevious = (l: OwnedLead): OwnedLead & { previous_stage: PreviousStage | null } => ({
+    ...l,
+    previous_stage: stagePeople ? previousStageFor(l.id, l.current_stage, numRounds, stagePeople) : null,
+  });
+
+  return {
+    pendingTotal,
+    stats,
+    pendingGroups: pendingGroups.map((g) => ({ ...g, leads: g.leads.map(withPrevious) })),
+    doneLeads: doneLeads.map(withPrevious),
+    myStages,
+  };
 }
 
 export async function getAdminDashboardExtras(input: DateFilterT) {

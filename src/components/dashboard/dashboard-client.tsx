@@ -9,6 +9,13 @@ import { getPipelineSnapshot, getAdminDashboardExtras, getPoolDashboard } from "
 import type { ShellUser } from "@/components/app-shell";
 import { PriorityBadge } from "@/components/priority-badge";
 import { ActivityFeed } from "@/components/activity-feed";
+import {
+  ColumnFilterPopover,
+  distinctValues,
+  rowPassesFilters,
+  type FilterColumn,
+  type SortDir,
+} from "@/components/column-filter-popover";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,7 +27,17 @@ type DateFilter = { from: string | null; to: string | null };
 const NO_FILTER: DateFilter = { from: null, to: null };
 
 type PendingDoneStat = { key: string; label: string; pending: number; done: number };
-type LeadRow = { id: string; lead_id: string; name: string; contact: string; source: string | null; lead_date: string | null; priority: number };
+type LeadRow = {
+  id: string;
+  lead_id: string;
+  name: string;
+  contact: string;
+  source: string | null;
+  lead_date: string | null;
+  priority: number;
+  /** Who completed the stage right before the lead's current one (pool dashboard only). */
+  previous_stage?: { label: string; person: string } | null;
+};
 type PendingGroup = { key: string; label: string; leads: LeadRow[] };
 type RoleDashboardData = {
   pendingTotal: number;
@@ -66,69 +83,142 @@ function DateRangeFilter({ onApply }: { onApply: (f: DateFilter) => void }) {
   );
 }
 
-function LeadRowsTable({ leads }: { leads: LeadRow[] }) {
-  const [sortKey, setSortKey] = React.useState<"lead_date" | "priority" | null>(null);
-  const [sortDir, setSortDir] = React.useState<"asc" | "desc">("asc");
+type LeadSortKey = "lead_date" | "priority" | "source";
 
-  function toggleSort(key: "lead_date" | "priority") {
+const sourceOf = (l: LeadRow) => l.source ?? "Direct";
+const priorityLabel = (l: LeadRow) => `S${l.priority}`;
+const FILTER_COLUMNS: FilterColumn<LeadRow>[] = [
+  { key: "source", valueOf: sourceOf },
+  { key: "priority", valueOf: priorityLabel },
+];
+const byPriorityLabel = (a: string, b: string) => Number(a.slice(1)) - Number(b.slice(1));
+
+// Column widths as shares of the table (table-fixed), so every column gets a
+// predictable slot, cells share the same px-3 gutter, and the tables in
+// different Pending groups line up with each other.
+const LEAD_TABLE_COLS = ["20%", "13%", "15%", "14%", "11%", "15%", "12%"];
+
+function LeadRowsTable({ leads }: { leads: LeadRow[] }) {
+  const [sortKey, setSortKey] = React.useState<LeadSortKey | null>(null);
+  const [sortDir, setSortDir] = React.useState<SortDir>("asc");
+  const [filters, setFilters] = React.useState<Record<string, Set<string> | null>>({});
+
+  function toggleSort(key: LeadSortKey) {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
       setSortKey(key);
       setSortDir("asc");
     }
   }
+  function sortBy(key: LeadSortKey, dir: SortDir) {
+    setSortKey(key);
+    setSortDir(dir);
+  }
 
-  const sorted = [...leads].sort((a, b) => {
+  const visible = leads.filter((l) => rowPassesFilters(l, FILTER_COLUMNS, filters));
+  const sorted = [...visible].sort((a, b) => {
     if (!sortKey) return 0;
-    const av = sortKey === "lead_date" ? (a.lead_date ?? "") : a.priority;
-    const bv = sortKey === "lead_date" ? (b.lead_date ?? "") : b.priority;
+    const av = sortKey === "lead_date" ? (a.lead_date ?? "") : sortKey === "source" ? sourceOf(a).toLowerCase() : a.priority;
+    const bv = sortKey === "lead_date" ? (b.lead_date ?? "") : sortKey === "source" ? sourceOf(b).toLowerCase() : b.priority;
+    if (av === bv) return 0;
     return sortDir === "asc" ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
   });
 
-  function SortableHead({ label, sortKeyValue }: { label: string; sortKeyValue: "lead_date" | "priority" }) {
-    const active = sortKey === sortKeyValue;
-    return (
-      <TableHead
-        onClick={() => toggleSort(sortKeyValue)}
-        className="cursor-pointer select-none hover:text-foreground"
-      >
-        {label}
-        {active ? (sortDir === "asc" ? " ↑" : " ↓") : ""}
-      </TableHead>
-    );
-  }
+  const sourceValues = distinctValues(leads, FILTER_COLUMNS[0], FILTER_COLUMNS, filters);
+  const priorityValues = distinctValues(leads, FILTER_COLUMNS[1], FILTER_COLUMNS, filters, byPriorityLabel);
+  const setFilter = (key: string) => (next: Set<string> | null) => setFilters((f) => ({ ...f, [key]: next }));
+  const hiddenCount = leads.length - visible.length;
+
+  const sortArrow = (key: LeadSortKey) => (sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "");
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Name</TableHead>
-          <TableHead>Contact</TableHead>
-          <TableHead>Source</TableHead>
-          <SortableHead label="Source Priority" sortKeyValue="priority" />
-          <SortableHead label="Date" sortKeyValue="lead_date" />
-          <TableHead />
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {sorted.map((l) => (
-          <TableRow key={l.id}>
-            <TableCell className="font-medium text-foreground">{l.name}</TableCell>
-            <TableCell className="tabular-nums text-muted-foreground">{formatContact(l.contact)}</TableCell>
-            <TableCell>
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{l.source ?? "Direct"}</span>
-            </TableCell>
-            <TableCell><PriorityBadge priority={l.priority} /></TableCell>
-            <TableCell className="text-muted-foreground">{l.lead_date ?? "—"}</TableCell>
-            <TableCell className="text-right">
-              <Button asChild size="sm">
-                <Link href={`/leads/${l.id}`}>View Lead</Link>
-              </Button>
-            </TableCell>
+    <>
+      <Table className="min-w-[820px] table-fixed">
+        <colgroup>
+          {LEAD_TABLE_COLS.map((w, i) => <col key={i} style={{ width: w }} />)}
+        </colgroup>
+        <TableHeader>
+          <TableRow>
+            <TableHead className="whitespace-nowrap">Name</TableHead>
+            <TableHead className="whitespace-nowrap">Contact</TableHead>
+            <TableHead className="whitespace-nowrap">
+              <div className="flex items-center gap-1">
+                <span>Source{sortArrow("source")}</span>
+                <ColumnFilterPopover
+                  label="Source"
+                  values={sourceValues}
+                  selected={filters.source ?? null}
+                  onChange={setFilter("source")}
+                  sortDir={sortKey === "source" ? sortDir : null}
+                  onSort={(dir) => sortBy("source", dir)}
+                />
+              </div>
+            </TableHead>
+            <TableHead className="whitespace-nowrap">
+              <div className="flex items-center gap-1">
+                <button type="button" onClick={() => toggleSort("priority")} className="uppercase tracking-wide hover:text-foreground">
+                  Source Priority{sortArrow("priority")}
+                </button>
+                <ColumnFilterPopover
+                  label="Source Priority"
+                  values={priorityValues}
+                  selected={filters.priority ?? null}
+                  onChange={setFilter("priority")}
+                  sortDir={sortKey === "priority" ? sortDir : null}
+                  onSort={(dir) => sortBy("priority", dir)}
+                />
+              </div>
+            </TableHead>
+            <TableHead onClick={() => toggleSort("lead_date")} className="cursor-pointer select-none whitespace-nowrap hover:text-foreground">
+              Date{sortArrow("lead_date")}
+            </TableHead>
+            <TableHead className="whitespace-nowrap">Previous Stage</TableHead>
+            <TableHead />
           </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+        </TableHeader>
+        <TableBody>
+          {sorted.map((l) => (
+            <TableRow key={l.id}>
+              <TableCell className="truncate font-medium text-foreground">{l.name}</TableCell>
+              <TableCell className="truncate tabular-nums text-muted-foreground">{formatContact(l.contact)}</TableCell>
+              <TableCell className="truncate">
+                <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{sourceOf(l)}</span>
+              </TableCell>
+              <TableCell><PriorityBadge priority={l.priority} /></TableCell>
+              <TableCell className="truncate text-muted-foreground">{l.lead_date ?? "—"}</TableCell>
+              <TableCell className="truncate">
+                {l.previous_stage ? (
+                  <>
+                    <div className="truncate text-foreground">{l.previous_stage.person}</div>
+                    <div className="truncate text-[11px] text-muted-foreground">{l.previous_stage.label}</div>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </TableCell>
+              <TableCell className="text-right">
+                <Button asChild size="sm">
+                  <Link href={`/leads/${l.id}`}>View Lead</Link>
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+          {sorted.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={LEAD_TABLE_COLS.length} className="py-6 text-center text-sm text-muted-foreground">
+                No leads match the column filters.
+              </TableCell>
+            </TableRow>
+          )}
+        </TableBody>
+      </Table>
+      {hiddenCount > 0 && (
+        <div className="flex items-center justify-between border-t border-border px-3 py-2 text-xs text-muted-foreground">
+          <span>{hiddenCount} lead{hiddenCount === 1 ? "" : "s"} hidden by column filters</span>
+          <button type="button" onClick={() => setFilters({})} className="font-medium text-primary hover:underline">Clear filters</button>
+        </div>
+      )}
+    </>
   );
 }
 
