@@ -35,8 +35,8 @@ type LeadRow = {
   source: string | null;
   lead_date: string | null;
   priority: number;
-  /** Who completed the stage right before the lead's current one (pool dashboard only). */
-  previous_stage?: { label: string; person: string } | null;
+  /** Who completed each earlier stage, keyed caller / r1_taker / ec_taker / rN_taker (pool dashboard Pending rows only). */
+  takers?: Record<string, string | null | undefined> | null;
 };
 type PendingGroup = { key: string; label: string; leads: LeadRow[] };
 type RoleDashboardData = {
@@ -93,12 +93,35 @@ const FILTER_COLUMNS: FilterColumn<LeadRow>[] = [
 ];
 const byPriorityLabel = (a: string, b: string) => Number(a.slice(1)) - Number(b.slice(1));
 
-// Column widths as shares of the table (table-fixed), so every column gets a
-// predictable slot, cells share the same px-3 gutter, and the tables in
-// different Pending groups line up with each other.
-const LEAD_TABLE_COLS = ["20%", "13%", "15%", "14%", "11%", "15%", "12%"];
+type TakerColumn = { key: string; label: string };
 
-function LeadRowsTable({ leads }: { leads: LeadRow[] }) {
+/**
+ * Extra "who did the earlier stages" columns for a Pending group, in pipeline
+ * order (Calling → Round 1 → Expert Creation → Round 2 → …): each group shows
+ * a taker column for every stage before its own, and nothing else.
+ */
+function takerColumnsFor(groupKey: string): TakerColumn[] {
+  const caller = { key: "caller", label: "Caller" };
+  const r1 = { key: "r1_taker", label: "R1 Taker" };
+  const ec = { key: "ec_taker", label: "EC Taker" };
+  if (groupKey === "round_1") return [caller];
+  if (groupKey === "expert_creation") return [caller, r1];
+  const m = groupKey.match(/^round_(\d+)$/);
+  if (m && Number(m[1]) >= 2) {
+    const n = Number(m[1]);
+    const laterRounds = Array.from({ length: n - 2 }, (_, i) => ({ key: `r${i + 2}_taker`, label: `R${i + 2} Taker` }));
+    return [caller, r1, ec, ...laterRounds];
+  }
+  return [];
+}
+
+// Fixed pixel widths (table-fixed) so every table shares the same px-3
+// gutter and column slots; Name has no fixed width and absorbs the slack.
+// SP is sized to its chip, not to a long header label.
+const COL_W = { contact: 120, source: 150, sp: 68, date: 104, taker: 130, action: 116 };
+const NAME_MIN_W = 160;
+
+function LeadRowsTable({ leads, takerColumns = [] }: { leads: LeadRow[]; takerColumns?: TakerColumn[] }) {
   const [sortKey, setSortKey] = React.useState<LeadSortKey | null>(null);
   const [sortDir, setSortDir] = React.useState<SortDir>("asc");
   const [filters, setFilters] = React.useState<Record<string, Set<string> | null>>({});
@@ -130,12 +153,20 @@ function LeadRowsTable({ leads }: { leads: LeadRow[] }) {
   const hiddenCount = leads.length - visible.length;
 
   const sortArrow = (key: LeadSortKey) => (sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : "");
+  const colCount = 6 + takerColumns.length;
+  const minWidth = NAME_MIN_W + COL_W.contact + COL_W.source + COL_W.sp + COL_W.date + COL_W.action + COL_W.taker * takerColumns.length;
 
   return (
     <>
-      <Table className="min-w-[820px] table-fixed">
+      <Table className="table-fixed" style={{ minWidth }}>
         <colgroup>
-          {LEAD_TABLE_COLS.map((w, i) => <col key={i} style={{ width: w }} />)}
+          <col />
+          <col style={{ width: COL_W.contact }} />
+          <col style={{ width: COL_W.source }} />
+          <col style={{ width: COL_W.sp }} />
+          <col style={{ width: COL_W.date }} />
+          {takerColumns.map((c) => <col key={c.key} style={{ width: COL_W.taker }} />)}
+          <col style={{ width: COL_W.action }} />
         </colgroup>
         <TableHeader>
           <TableRow>
@@ -157,10 +188,10 @@ function LeadRowsTable({ leads }: { leads: LeadRow[] }) {
             <TableHead className="whitespace-nowrap">
               <div className="flex items-center gap-1">
                 <button type="button" onClick={() => toggleSort("priority")} className="uppercase tracking-wide hover:text-foreground">
-                  Source Priority{sortArrow("priority")}
+                  SP{sortArrow("priority")}
                 </button>
                 <ColumnFilterPopover
-                  label="Source Priority"
+                  label="SP"
                   values={priorityValues}
                   selected={filters.priority ?? null}
                   onChange={setFilter("priority")}
@@ -172,7 +203,9 @@ function LeadRowsTable({ leads }: { leads: LeadRow[] }) {
             <TableHead onClick={() => toggleSort("lead_date")} className="cursor-pointer select-none whitespace-nowrap hover:text-foreground">
               Date{sortArrow("lead_date")}
             </TableHead>
-            <TableHead className="whitespace-nowrap">Previous Stage</TableHead>
+            {takerColumns.map((c) => (
+              <TableHead key={c.key} className="whitespace-nowrap">{c.label}</TableHead>
+            ))}
             <TableHead />
           </TableRow>
         </TableHeader>
@@ -186,16 +219,14 @@ function LeadRowsTable({ leads }: { leads: LeadRow[] }) {
               </TableCell>
               <TableCell><PriorityBadge priority={l.priority} /></TableCell>
               <TableCell className="truncate text-muted-foreground">{l.lead_date ?? "—"}</TableCell>
-              <TableCell className="truncate">
-                {l.previous_stage ? (
-                  <>
-                    <div className="truncate text-foreground">{l.previous_stage.person}</div>
-                    <div className="truncate text-[11px] text-muted-foreground">{l.previous_stage.label}</div>
-                  </>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </TableCell>
+              {takerColumns.map((c) => {
+                const person = l.takers?.[c.key];
+                return (
+                  <TableCell key={c.key} className={cn("truncate", person ? "text-foreground" : "text-muted-foreground")}>
+                    {person || "—"}
+                  </TableCell>
+                );
+              })}
               <TableCell className="text-right">
                 <Button asChild size="sm">
                   <Link href={`/leads/${l.id}`}>View Lead</Link>
@@ -205,7 +236,7 @@ function LeadRowsTable({ leads }: { leads: LeadRow[] }) {
           ))}
           {sorted.length === 0 && (
             <TableRow>
-              <TableCell colSpan={LEAD_TABLE_COLS.length} className="py-6 text-center text-sm text-muted-foreground">
+              <TableCell colSpan={colCount} className="py-6 text-center text-sm text-muted-foreground">
                 No leads match the column filters.
               </TableCell>
             </TableRow>
@@ -457,7 +488,7 @@ function RolePendingDoneDashboard({
                   </button>
                   {isGroupOpen(g.key) && (
                     <CardContent className="border-t border-border p-0">
-                      <LeadRowsTable leads={g.leads} />
+                      <LeadRowsTable leads={g.leads} takerColumns={takerColumnsFor(g.key)} />
                     </CardContent>
                   )}
                 </Card>

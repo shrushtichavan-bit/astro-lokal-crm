@@ -68,40 +68,32 @@ export async function loadStagePeople(ids: string[], roundNumbers: number[]): Pr
   return { resolve, chainBy, attemptsBy, roundsBy, profileByLead };
 }
 
-export type PreviousStage = { label: string; person: string };
-
 /**
- * The most recent *completed* stage before the lead's current one, in
- * pipeline order: Calling → Round 1 → Expert Creation → Round 2 → … Round N.
- * For a stage outside that list (terminal/closed), it's simply the last
- * completed stage. Calling counts as done by whoever marked it Connected, or
- * failing that whoever logged the latest attempt.
+ * Who completed each pipeline stage for a lead, by stage: `caller` (Calling),
+ * `r1_taker`, `ec_taker` (Expert Creation), `r2_taker`, … `rN_taker`.
+ * Names are resolved; a stage not completed yet is null. The caller is
+ * whoever marked the lead Connected, or failing that whoever logged the
+ * latest attempt.
  */
-export function previousStageFor(
-  leadId: string,
-  currentStage: string,
-  numRounds: number,
-  sp: StagePeople,
-): PreviousStage | null {
+export type StageTakers = Record<"caller" | "r1_taker" | "ec_taker", string | null> &
+  Partial<Record<`r${number}_taker`, string | null>>;
+
+export function stageTakersFor(leadId: string, numRounds: number, sp: StagePeople): StageTakers {
   const attempts = Object.entries(sp.attemptsBy.get(leadId) ?? {})
     .map(([n, a]) => ({ n: Number(n), ...a }))
     .sort((a, b) => a.n - b.n);
   const connected = attempts.find((a) => a.outcome === "connected");
-  const callingBy = connected?.attempted_by ?? attempts[attempts.length - 1]?.attempted_by ?? null;
+  const callerEmail = connected?.attempted_by ?? attempts[attempts.length - 1]?.attempted_by ?? null;
   const rounds = sp.roundsBy.get(leadId) ?? {};
-  const roundBy = (n: number) => (rounds[n]?.submitted_at ? rounds[n].conducted_by : null);
+  const orNull = (email: string | null | undefined) => (email ? sp.resolve(email) : null);
 
-  const steps: Array<{ pendingStage: string; label: string; by: string | null }> = [
-    { pendingStage: "calling_pending", label: "Calling", by: callingBy },
-    { pendingStage: "round_1_pending", label: "Round 1", by: roundBy(1) },
-    { pendingStage: "profile_creation_pending", label: "Expert Creation", by: sp.profileByLead.get(leadId)?.linked_by ?? null },
-  ];
-  for (let n = 2; n <= numRounds; n++) steps.push({ pendingStage: `round_${n}_pending`, label: `Round ${n}`, by: roundBy(n) });
-
-  const idx = steps.findIndex((s) => s.pendingStage === currentStage);
-  const before = idx === -1 ? steps : steps.slice(0, idx);
-  for (let i = before.length - 1; i >= 0; i--) {
-    if (before[i].by) return { label: before[i].label, person: sp.resolve(before[i].by) };
+  const takers: StageTakers = {
+    caller: orNull(callerEmail),
+    r1_taker: null,
+    ec_taker: orNull(sp.profileByLead.get(leadId)?.linked_by),
+  };
+  for (let n = 1; n <= numRounds; n++) {
+    takers[`r${n}_taker`] = rounds[n]?.submitted_at ? orNull(rounds[n].conducted_by) : null;
   }
-  return null;
+  return takers;
 }
