@@ -42,6 +42,7 @@ export interface CallAttemptRow {
   outcome: string | null;
   attempted_by: string;
   attempted_at: string;
+  remarks: string | null;
 }
 
 export interface CallingStatusRow {
@@ -104,6 +105,8 @@ export interface ExpertProfileRow {
   linked_at: string;
   is_active: boolean;
   activated_at: string | null;
+  notes: string | null;
+  drop_reason: string | null;
 }
 
 export interface StagePoolRow {

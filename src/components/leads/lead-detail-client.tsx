@@ -49,6 +49,37 @@ function fmtDateTime(iso: string): string {
   return d.toLocaleString(undefined, { day: "numeric", month: "short", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
+// Matches http(s):// and bare www. links; trailing punctuation is trimmed off
+// below so "see https://x.com." doesn't swallow the full stop.
+const URL_RE = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi;
+const TRAILING_PUNCT_RE = /[.,;:!?)\]}'"]+$/;
+
+/** Renders free text with any URLs turned into new-tab links. Display only. */
+function Linkified({ text }: { text: string }) {
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const m of text.matchAll(URL_RE)) {
+    const start = m.index ?? 0;
+    const raw = m[0];
+    const url = raw.replace(TRAILING_PUNCT_RE, "");
+    if (start > last) parts.push(text.slice(last, start));
+    parts.push(
+      <a
+        key={start}
+        href={url.startsWith("www.") ? `https://${url}` : url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="break-all text-primary underline underline-offset-2 hover:no-underline"
+      >
+        {url}
+      </a>,
+    );
+    last = start + url.length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
 const OUTCOME_LABELS: Record<string, string> = {
   connected: "Connected",
   rnr: "RNR",
@@ -187,9 +218,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
   });
 
   const sortedAttempts = [...attempts].sort((a, b) => a.attempt_number - b.attempt_number);
-  const lastAttempt = sortedAttempts[sortedAttempts.length - 1] as
-    | ((typeof sortedAttempts)[number] & { outcome?: string | null; remarks?: string | null })
-    | undefined;
+  const lastAttempt = sortedAttempts[sortedAttempts.length - 1] as (typeof sortedAttempts)[number] | undefined;
   const callingState: TimelineState = lead.current_stage === "calling_pending" ? "current" : "done";
   const callingOutcome = lastAttempt ? (lastAttempt.outcome ?? (lastAttempt.connected ? "connected" : "rnr")) : null;
   // While calling is the live stage, current_owner_email is the authoritative
@@ -216,14 +245,14 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
         )}
         {sortedAttempts.length === 0 && <div>No attempts logged yet.</div>}
         {sortedAttempts.map((a) => {
-          const o = (a as { outcome?: string | null }).outcome ?? (a.connected ? "connected" : "rnr");
+          const o = a.outcome ?? (a.connected ? "connected" : "rnr");
           return (
             <div key={a.id} className="border-t border-border pt-2 first:border-t-0 first:pt-0">
               <div>
                 Attempt {a.attempt_number}: <span className="font-medium text-foreground">{OUTCOME_LABELS[o] ?? o}</span>
                 {" · "}{fmtDateTime(a.attempted_at)}
               </div>
-              {(a as { remarks?: string | null }).remarks && <div>Notes: {(a as { remarks?: string | null }).remarks}</div>}
+              {a.remarks && <div>Notes: <Linkified text={a.remarks} /></div>}
             </div>
           );
         })}
@@ -266,7 +295,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
             <RetakeControl leadId={lead.id} stage={stageKey} stageLabel="Round 1" onChanged={onChanged} />
           )}
           {round?.total_score != null && <div>Score: <span className="font-medium text-foreground">{round.total_score}</span></div>}
-          {round?.remarks && <div>Notes: {round.remarks}</div>}
+          {round?.remarks && <div>Notes: <Linkified text={round.remarks} /></div>}
         </div>
       ),
     });
@@ -313,6 +342,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
             />
           )}
           {profile && <div>Expert ID: <span className="font-mono text-foreground">{profile.expert_id}</span></div>}
+          {profile?.notes && <div>Notes: <Linkified text={profile.notes} /></div>}
         </div>
       ),
     });
@@ -352,7 +382,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
             <RetakeControl leadId={lead.id} stage={stageKey} stageLabel={`Round ${n}`} onChanged={onChanged} />
           )}
           {round?.total_score != null && <div>Score: <span className="font-medium text-foreground">{round.total_score}</span></div>}
-          {round?.remarks && <div>Notes: {round.remarks}</div>}
+          {round?.remarks && <div>Notes: <Linkified text={round.remarks} /></div>}
         </div>
       ),
     });
@@ -882,6 +912,7 @@ function ProfileActions({ data, onChanged }: { data: LeadData; onChanged: () => 
   const { lead } = data;
   const numRounds = data.cfg.num_rounds;
   const [expertId, setExpertId] = React.useState("");
+  const [notes, setNotes] = React.useState("");
   const [nextOwner, setNextOwner] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const queryClient = useQueryClient();
@@ -903,6 +934,7 @@ function ProfileActions({ data, onChanged }: { data: LeadData; onChanged: () => 
       await linkExpertProfile({
         lead_id: lead.id,
         expert_id: expertId.trim(),
+        notes: notes.trim() || null,
         next_owner_email: numRounds > 1 ? nextOwner : null,
       });
       queryClient.invalidateQueries({ queryKey: ["dashboard-pipeline-snapshot"] });
@@ -927,6 +959,10 @@ function ProfileActions({ data, onChanged }: { data: LeadData; onChanged: () => 
         </p>
         <div className="mt-4 space-y-3">
           <Input value={expertId} onChange={(e) => setExpertId(e.target.value)} placeholder="Expert ID" />
+          <div className="space-y-1.5">
+            <Label>Notes (optional)</Label>
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
+          </div>
           {numRounds > 1 && (
             <div className="space-y-1.5">
               <Label>Who takes Round 2?</Label>

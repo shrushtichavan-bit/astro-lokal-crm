@@ -306,16 +306,19 @@ export async function logCallOutcome(input: {
     assignedKam = target;
   }
 
+  // Remarks are optional for connected/rnr/reconnect but still stored per
+  // attempt whenever given — calling_status only keeps the latest one.
+  const remarks = data.remarks?.trim() || null;
+
   await pool.query(
-    `INSERT INTO call_attempts (lead_id, attempt_number, connected, outcome, attempted_by, attempted_at)
-     VALUES ($1, $2, $3, $4, $5, now())
+    `INSERT INTO call_attempts (lead_id, attempt_number, connected, outcome, remarks, attempted_by, attempted_at)
+     VALUES ($1, $2, $3, $4, $5, $6, now())
      ON CONFLICT (lead_id, attempt_number) DO UPDATE SET
-       connected = EXCLUDED.connected, outcome = EXCLUDED.outcome, attempted_by = EXCLUDED.attempted_by, attempted_at = EXCLUDED.attempted_at`,
-    [lead.id, data.attempt_number, data.outcome === "connected", data.outcome, u.email],
+       connected = EXCLUDED.connected, outcome = EXCLUDED.outcome, remarks = EXCLUDED.remarks,
+       attempted_by = EXCLUDED.attempted_by, attempted_at = EXCLUDED.attempted_at`,
+    [lead.id, data.attempt_number, data.outcome === "connected", data.outcome, remarks, u.email],
   );
-  await appendAudit(lead.id, `attempt_${data.attempt_number}:${data.outcome}`, u.email, {
-    remarks: data.remarks ?? null,
-  });
+  await appendAudit(lead.id, `attempt_${data.attempt_number}:${data.outcome}`, u.email, { remarks });
 
   await pool.query(
     `INSERT INTO calling_status (lead_id, status, remarks, assigned_kam_email, set_by, set_at)
@@ -323,7 +326,7 @@ export async function logCallOutcome(input: {
      ON CONFLICT (lead_id) DO UPDATE SET
        status = EXCLUDED.status, remarks = EXCLUDED.remarks, assigned_kam_email = EXCLUDED.assigned_kam_email,
        set_by = EXCLUDED.set_by, set_at = EXCLUDED.set_at`,
-    [lead.id, data.outcome, data.remarks ?? null, assignedKam, u.email],
+    [lead.id, data.outcome, remarks, assignedKam, u.email],
   );
 
   if (data.outcome === "connected") {
@@ -520,11 +523,17 @@ export async function submitRound(input: {
 
 // ---------- Expert creation ----------
 
-export async function linkExpertProfile(input: { lead_id: string; expert_id: string; next_owner_email?: string | null }) {
+export async function linkExpertProfile(input: {
+  lead_id: string;
+  expert_id: string;
+  notes?: string | null;
+  next_owner_email?: string | null;
+}) {
   const data = z
     .object({
       lead_id: z.string().uuid(),
       expert_id: z.string().min(1).max(200),
+      notes: z.string().max(2000).nullish(),
       next_owner_email: z.string().email().max(255).nullish(),
     })
     .parse(input);
@@ -533,11 +542,12 @@ export async function linkExpertProfile(input: { lead_id: string; expert_id: str
   if (lead.current_stage !== "profile_creation_pending") throw new Error("Lead is not in profile creation stage");
 
   await pool.query(
-    `INSERT INTO expert_profiles (lead_id, expert_id, linked_by, is_active)
-     VALUES ($1, $2, $3, false)
+    `INSERT INTO expert_profiles (lead_id, expert_id, linked_by, is_active, notes)
+     VALUES ($1, $2, $3, false, $4)
      ON CONFLICT (lead_id) DO UPDATE SET
-       expert_id = EXCLUDED.expert_id, linked_by = EXCLUDED.linked_by, is_active = EXCLUDED.is_active`,
-    [lead.id, data.expert_id, u.email],
+       expert_id = EXCLUDED.expert_id, linked_by = EXCLUDED.linked_by, is_active = EXCLUDED.is_active,
+       notes = EXCLUDED.notes`,
+    [lead.id, data.expert_id, u.email, data.notes?.trim() || null],
   );
 
   const { num_rounds } = await loadRoundConfig();
