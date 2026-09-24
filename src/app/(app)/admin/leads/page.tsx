@@ -127,10 +127,8 @@ type DateDir = "asc" | "desc";
 const PAGE_SIZE = 100;
 const MAX_RENDERED = 300;
 
-// Fixed pixel widths for every column, in render order. Shared between the
-// (non-scrolling) header table and the (scrolling) body table via matching
-// <colgroup>s — this is what keeps the two tables' columns aligned instead
-// of relying on independent auto-sizing per table.
+// Fixed pixel widths for every column, in render order, applied via the
+// table's <colgroup> (with table-fixed) so columns don't reflow as rows load.
 function useColumnWidths(numRounds: number) {
   return React.useMemo(
     // Lead ID, Name, Contact, Lead Date, Caller, Calling Attempts, Round 1, Expert Creation, Round 2..N, Current Stage, View Lead
@@ -163,18 +161,6 @@ function AllLeadsPageInner() {
   const [verdict, setVerdict] = React.useState("");
   const [sort, setSort] = React.useState<SortKey>("lead_date");
   const [dateDir, setDateDir] = React.useState<DateDir>("desc");
-
-  // The body table scrolls both ways; the header table only ever scrolls
-  // horizontally, and only because we mirror the body's scrollLeft onto it
-  // (it has no scrollbar of its own) — that's what keeps the header's
-  // columns lined up with the body's as the user scrolls sideways.
-  const headerScrollRef = React.useRef<HTMLDivElement>(null);
-  const bodyScrollRef = React.useRef<HTMLDivElement>(null);
-  function syncHeaderScroll() {
-    if (headerScrollRef.current && bodyScrollRef.current) {
-      headerScrollRef.current.scrollLeft = bodyScrollRef.current.scrollLeft;
-    }
-  }
 
   function handleDateClick() {
     setDateDir((d) => (sort === "lead_date" ? (d === "asc" ? "desc" : "asc") : "desc"));
@@ -253,6 +239,7 @@ function AllLeadsPageInner() {
       {columnWidths.map((w, i) => <col key={i} style={{ width: w }} />)}
     </colgroup>
   );
+  const tableMinWidth = columnWidths.reduce((a, b) => a + b, 0);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
@@ -343,10 +330,14 @@ function AllLeadsPageInner() {
           <EmptyState icon={Users2} title="No leads match these filters" description="Try widening your date range or clearing filters." />
         ) : (
           <Card className="flex h-full min-h-0 flex-col overflow-hidden">
-            <div ref={headerScrollRef} className="shrink-0 overflow-hidden border-b border-border">
-              <table className="w-full table-fixed border-collapse text-sm">
+            {/* One scroll container for header + body: the header is sticky
+                inside it, so it moves with the body horizontally for free. */}
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="w-full table-fixed border-collapse text-sm" style={{ minWidth: tableMinWidth }}>
                 {colgroup}
-                <TableHeader className="[&_tr]:border-b-0">
+                {/* border-collapse borders don't stick with a sticky header, so
+                    the divider under it is an inset shadow instead. */}
+                <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_hsl(var(--border))] [&_tr]:border-b-0">
                   <TableRow>
                     <TableHead className="px-2 py-2">Lead ID</TableHead>
                     <TableHead className="px-2 py-2">Name</TableHead>
@@ -361,11 +352,6 @@ function AllLeadsPageInner() {
                     <TableHead className="px-2 py-2" />
                   </TableRow>
                 </TableHeader>
-              </table>
-            </div>
-            <div ref={bodyScrollRef} onScroll={syncHeaderScroll} className="min-h-0 flex-1 overflow-auto">
-              <table className="w-full table-fixed border-collapse text-sm">
-                {colgroup}
                 <TableBody>
                   {visibleRows.map((r) => {
                     const pill = stageToPill(r.current_stage);
