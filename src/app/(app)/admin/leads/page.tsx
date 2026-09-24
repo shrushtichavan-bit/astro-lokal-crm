@@ -133,8 +133,8 @@ const MAX_RENDERED = 300;
 // of relying on independent auto-sizing per table.
 function useColumnWidths(numRounds: number) {
   return React.useMemo(
-    // Lead ID, Name, Contact, Lead Date, Caller, Calling Attempts, Round 1..N, Expert Creation, Current Stage, View Lead
-    () => [160, 160, 120, 90, 100, 180, ...Array.from({ length: numRounds }, () => 100), 120, 130, 80],
+    // Lead ID, Name, Contact, Lead Date, Caller, Calling Attempts, Round 1, Expert Creation, Round 2..N, Current Stage, View Lead
+    () => [160, 160, 120, 90, 100, 180, 100, 120, ...Array.from({ length: Math.max(numRounds - 1, 0) }, () => 100), 130, 80],
     [numRounds],
   );
 }
@@ -354,8 +354,9 @@ function AllLeadsPageInner() {
                     <DateSortTh />
                     <TableHead className="px-2 py-2">Caller</TableHead>
                     <TableHead className="px-2 py-2">Calling Attempts</TableHead>
-                    {roundNumbers.map((n) => <TableHead key={n} className="px-2 py-2">Round {n}</TableHead>)}
+                    {roundNumbers.slice(0, 1).map((n) => <TableHead key={n} className="px-2 py-2">Round {n}</TableHead>)}
                     <TableHead className="px-2 py-2">Expert Creation</TableHead>
+                    {roundNumbers.slice(1).map((n) => <TableHead key={n} className="px-2 py-2">Round {n}</TableHead>)}
                     <SortableTh k="stage" label="Current Stage" />
                     <TableHead className="px-2 py-2" />
                   </TableRow>
@@ -378,7 +379,7 @@ function AllLeadsPageInner() {
                         <TableCell className="px-2 py-2">
                           <CallingAttemptsCell attempts={r.attempts} />
                         </TableCell>
-                        {r.rounds.map((round, i) => (
+                        {r.rounds.slice(0, 1).map((round, i) => (
                           <TableCell key={i} className="px-2 py-2">
                             <RoundCell round={round} />
                           </TableCell>
@@ -386,6 +387,11 @@ function AllLeadsPageInner() {
                         <TableCell className="px-2 py-2">
                           <ExpertCreationCell slot={r.expert_creation} />
                         </TableCell>
+                        {r.rounds.slice(1).map((round, i) => (
+                          <TableCell key={i + 1} className="px-2 py-2">
+                            <RoundCell round={round} />
+                          </TableCell>
+                        ))}
                         <TableCell className="px-2 py-2 text-xs">
                           <StatusPill kind={pill.kind} label={pill.label} />
                         </TableCell>
