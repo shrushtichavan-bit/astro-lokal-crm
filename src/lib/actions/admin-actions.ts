@@ -68,7 +68,7 @@ async function leadsMatchingFilters(f: Filters): Promise<Set<string> | null> {
 
 export async function getAdminFunnel(input: Filters) {
   const f = FiltersSchema.parse(input);
-  await requireRole(["admin", "kam"]);
+  await requireRole(["admin", "kam", "lma"]);
   const numRounds = await loadNumRounds();
   const filterIds = await leadsMatchingFilters(f);
 
@@ -150,7 +150,7 @@ async function leadsInDateRange(f: DateOnlyT): Promise<Set<string> | null> {
 
 export async function getCallers(input: DateOnlyT) {
   const f = DateOnly.parse(input);
-  await requireRole("admin");
+  await requireRole(["admin", "lma"]);
   const dateIds = await leadsInDateRange(f);
 
   const [leadsRes, attsRes, csRes, usersRes] = await Promise.all([
@@ -198,7 +198,7 @@ export async function getCallers(input: DateOnlyT) {
 
 export async function getRoundWorkers(input: DateOnlyT & { round: number }) {
   const f = DateOnly.extend({ round: z.number().int().min(1).max(4) }).parse(input);
-  await requireRole("admin");
+  await requireRole(["admin", "lma"]);
   const dateIds = await leadsInDateRange(f);
   const [poolRes, roundsRes, usersRes] = await Promise.all([
     pool.query<{ eligible_email: string }>(`SELECT eligible_email FROM stage_pools WHERE stage = $1`, [`round_${f.round}`]),
@@ -235,7 +235,7 @@ export async function getRoundWorkers(input: DateOnlyT & { round: number }) {
 
 export async function getCreationAgents(input: DateOnlyT) {
   const f = DateOnly.parse(input);
-  await requireRole("admin");
+  await requireRole(["admin", "lma"]);
   const dateIds = await leadsInDateRange(f);
   const [poolRes, profilesRes, usersRes] = await Promise.all([
     pool.query<{ eligible_email: string }>(`SELECT eligible_email FROM stage_pools WHERE stage = 'expert_creation'`),
@@ -757,22 +757,17 @@ export async function listAllPeople() {
   return { people: rows };
 }
 
-export async function getRecentActivity(input: DateOnlyT = {}) {
-  const f = DateOnly.parse(input);
-  await requireRole(["admin", "kam"]);
-  const hasDateFilter = Boolean(f.from || f.to);
+type AuditRow = {
+  id: string;
+  lead_id: string | null;
+  action: string;
+  performed_by: string;
+  performed_at: string;
+  metadata: unknown;
+};
 
-  const { rows: data } = await pool.query<{
-    id: string;
-    lead_id: string | null;
-    action: string;
-    performed_by: string;
-    performed_at: string;
-    metadata: unknown;
-  }>(`SELECT id, lead_id, action, performed_by, performed_at, metadata FROM audit_log ORDER BY performed_at DESC LIMIT $1`, [
-    hasDateFilter ? 300 : 20,
-  ]);
-
+/** Resolves lead + performer names for raw audit_log rows — shared by the dashboard feed and the per-person feed. */
+async function hydrateActivity(data: AuditRow[]) {
   const leadIds = Array.from(new Set(data.map((r) => r.lead_id).filter((x): x is string => Boolean(x))));
   const { rows: leads } = leadIds.length
     ? await pool.query<{ id: string; lead_id: string; name: string; lead_date: string | null }>(
@@ -785,12 +780,30 @@ export async function getRecentActivity(input: DateOnlyT = {}) {
   const { rows: users } = await pool.query<Pick<UserRow, "email" | "name">>(`SELECT email, name FROM users`);
   const nameByEmail = new Map(users.map((u) => [u.email, u.name]));
 
-  let scoped = data;
+  return data.map((r) => ({
+    id: r.id,
+    action: r.action,
+    description: describeAuditAction(r.action, r.metadata),
+    performed_by: nameByEmail.get(r.performed_by) ?? r.performed_by,
+    performed_at: r.performed_at,
+    lead: r.lead_id ? (leadById.get(r.lead_id) ?? null) : null,
+  }));
+}
+
+export async function getRecentActivity(input: DateOnlyT = {}) {
+  const f = DateOnly.parse(input);
+  await requireRole(["admin", "kam"]);
+  const hasDateFilter = Boolean(f.from || f.to);
+
+  const { rows: data } = await pool.query<AuditRow>(
+    `SELECT id, lead_id, action, performed_by, performed_at, metadata FROM audit_log ORDER BY performed_at DESC LIMIT $1`,
+    [hasDateFilter ? 300 : 20],
+  );
+
+  let rows = await hydrateActivity(data);
   if (hasDateFilter) {
-    scoped = scoped.filter((r) => {
-      if (!r.lead_id) return false;
-      const lead = leadById.get(r.lead_id);
-      const leadDate = lead?.lead_date ?? null;
+    rows = rows.filter((r) => {
+      const leadDate = r.lead?.lead_date ?? null;
       if (!leadDate) return false;
       if (f.from && leadDate < f.from) return false;
       if (f.to && leadDate > f.to) return false;
@@ -798,16 +811,19 @@ export async function getRecentActivity(input: DateOnlyT = {}) {
     });
   }
 
-  return {
-    rows: scoped.slice(0, 20).map((r) => ({
-      id: r.id,
-      action: r.action,
-      description: describeAuditAction(r.action, r.metadata),
-      performed_by: nameByEmail.get(r.performed_by) ?? r.performed_by,
-      performed_at: r.performed_at,
-      lead: r.lead_id ? (leadById.get(r.lead_id) ?? null) : null,
-    })),
-  };
+  return { rows: rows.slice(0, 20) };
+}
+
+/** One person's activity feed (audit_log rows they performed), newest first — People page drill-down. */
+export async function getPersonActivity(input: { email: string }) {
+  const { email } = z.object({ email: z.string().email().max(255) }).parse(input);
+  await requireRole(["admin", "lma"]);
+  const { rows: data } = await pool.query<AuditRow>(
+    `SELECT id, lead_id, action, performed_by, performed_at, metadata FROM audit_log
+     WHERE performed_by = $1 ORDER BY performed_at DESC LIMIT 200`,
+    [email.toLowerCase()],
+  );
+  return { rows: await hydrateActivity(data) };
 }
 
 export async function getDuplicateLog() {

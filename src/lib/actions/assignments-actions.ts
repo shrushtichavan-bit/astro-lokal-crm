@@ -231,7 +231,7 @@ export async function getAssignmentCountsByStage() {
 }
 
 export async function getStageAssignmentCounts() {
-  await requireRole("admin");
+  await requireRole(["admin", "lma"]);
   const { rows } = await pool.query<{ stage: string; assigned_email: string }>(
     `SELECT stage, assigned_email FROM lead_stage_assignments`,
   );

@@ -61,11 +61,12 @@ const KAM_NAV: NavItem[] = [
   { href: "/admin/leads/add", label: "Add Lead", icon: UserPlus },
 ];
 // LMA: does round 1/2 interviews + expert profile creation. Access: dashboard,
-// all leads, add lead, sync — no allotment (that's KAM/admin only), config is admin-only.
+// all leads, add lead, people, sync — no allotment (that's KAM/admin only), config is admin-only.
 const LMA_NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/leads", label: "All Leads", icon: Users2 },
   { href: "/admin/leads/add", label: "Add Lead", icon: UserPlus },
+  { href: "/admin/people", label: "People", icon: Users2 },
 ];
 // Telecaller: calling attempts only. Access: dashboard, all leads, add lead.
 const TELECALLER_NAV: NavItem[] = [

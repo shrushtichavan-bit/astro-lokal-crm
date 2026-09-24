@@ -2,9 +2,13 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getCallers, getRoundWorkers, getCreationAgents, getAdminFunnel } from "@/lib/actions/admin-actions";
+import { Info } from "lucide-react";
+import { getCallers, getRoundWorkers, getCreationAgents, getAdminFunnel, getPersonActivity } from "@/lib/actions/admin-actions";
 import { getStageAssignmentCounts } from "@/lib/actions/assignments-actions";
 import { PageHeader } from "@/components/page-header";
+import { ActivityFeed } from "@/components/activity-feed";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +20,71 @@ function futureAssignedFor(rows: AssignedRow[], stage: string, email: string): n
   return rows.find((r) => r.stage === stage && r.assigned_email === email)?.count ?? 0;
 }
 
+type Person = { email: string; name: string };
+
+// Local-date YYYY-MM-DD, matching what <input type="date"> produces.
+function ymd(d: Date): string {
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${mm}-${dd}`;
+}
+function lastNDays(n: number): { from: string; to: string } {
+  const to = new Date();
+  const from = new Date();
+  from.setDate(to.getDate() - (n - 1));
+  return { from: ymd(from), to: ymd(to) };
+}
+const QUICK_RANGES = [
+  { label: "Today", days: 1 },
+  { label: "7d", days: 7 },
+  { label: "30d", days: 30 },
+] as const;
+
+const FUTURE_ASSIGNED_HINT = "Leads already assigned to this person for a stage they haven't reached yet — their upcoming workload.";
+
+function FutureAssignedHead() {
+  return (
+    <TableHead className="text-right">
+      <span title={FUTURE_ASSIGNED_HINT} aria-label={`Future Assigned: ${FUTURE_ASSIGNED_HINT}`} className="inline-flex cursor-help items-center gap-1">
+        Future Assigned
+        <Info className="h-3 w-3" />
+      </span>
+    </TableHead>
+  );
+}
+
+function PersonNameCell({ person, onSelect }: { person: Person; onSelect: (p: Person) => void }) {
+  return (
+    <TableCell>
+      <button type="button" onClick={() => onSelect(person)} className="text-left hover:text-primary hover:underline">
+        {person.name}
+      </button>
+      <div className="text-[11px] text-muted-foreground">{person.email}</div>
+    </TableCell>
+  );
+}
+
+function PersonActivityDialog({ person, onClose }: { person: Person | null; onClose: () => void }) {
+  const q = useQuery({
+    queryKey: ["person-activity", person?.email],
+    queryFn: () => getPersonActivity({ email: person!.email }),
+    enabled: person !== null,
+  });
+  return (
+    <Dialog open={person !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{person?.name}</DialogTitle>
+          <DialogDescription>{person?.email} · most recent activity first</DialogDescription>
+        </DialogHeader>
+        <div className="-mx-6 max-h-[60vh] overflow-y-auto border-t border-border">
+          <ActivityFeed rows={q.data?.rows ?? []} loading={q.isLoading} emptyText="No activity logged for this person yet." />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function PeoplePage() {
   const [from, setFrom] = React.useState("");
   const [to, setTo] = React.useState("");
@@ -23,29 +92,56 @@ export default function PeoplePage() {
   const numRounds = cfg.data?.num_rounds ?? 2;
   const assignedQ = useQuery({ queryKey: ["admin-stage-assignment-counts"], queryFn: () => getStageAssignmentCounts() });
   const assignedRows = assignedQ.data?.rows ?? [];
+  const [selected, setSelected] = React.useState<Person | null>(null);
 
   return (
     <div>
       <PageHeader title="People" description="Per-person workload across every stage, including future-assigned leads." />
       <Card className="mb-6">
-        <CardContent className="grid grid-cols-2 gap-3 p-4">
-          <div><Label className="text-xs">From</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
-          <div><Label className="text-xs">To</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+        <CardContent className="space-y-3 p-4">
+          <div className="flex flex-wrap gap-2">
+            {QUICK_RANGES.map((r) => {
+              const range = lastNDays(r.days);
+              const active = from === range.from && to === range.to;
+              return (
+                <Button
+                  key={r.label}
+                  type="button"
+                  size="sm"
+                  variant={active ? "default" : "outline"}
+                  onClick={() => {
+                    setFrom(range.from);
+                    setTo(range.to);
+                  }}
+                >
+                  {r.label}
+                </Button>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label className="text-xs">From</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
+            <div><Label className="text-xs">To</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
+          </div>
         </CardContent>
       </Card>
 
       <div className="space-y-6">
-        <CallersCard from={from} to={to} assignedRows={assignedRows} />
+        <CallersCard from={from} to={to} assignedRows={assignedRows} onSelect={setSelected} />
         {Array.from({ length: numRounds }, (_, i) => i + 1).map((n) => (
-          <RoundWorkersCard key={n} round={n} from={from} to={to} assignedRows={assignedRows} />
+          <RoundWorkersCard key={n} round={n} from={from} to={to} assignedRows={assignedRows} onSelect={setSelected} />
         ))}
-        <CreationAgentsCard from={from} to={to} assignedRows={assignedRows} />
+        <CreationAgentsCard from={from} to={to} assignedRows={assignedRows} onSelect={setSelected} />
       </div>
+
+      <PersonActivityDialog person={selected} onClose={() => setSelected(null)} />
     </div>
   );
 }
 
-function CallersCard({ from, to, assignedRows }: { from: string; to: string; assignedRows: AssignedRow[] }) {
+type CardProps = { from: string; to: string; assignedRows: AssignedRow[]; onSelect: (p: Person) => void };
+
+function CallersCard({ from, to, assignedRows, onSelect }: CardProps) {
   const q = useQuery({ queryKey: ["admin-callers", from, to], queryFn: () => getCallers({ from: from || null, to: to || null }) });
   return (
     <Card>
@@ -64,13 +160,13 @@ function CallersCard({ from, to, assignedRows }: { from: string; to: string; ass
                 <TableHead className="text-right">A3</TableHead>
                 <TableHead className="text-right">Connected</TableHead>
                 <TableHead className="text-right">Conversion</TableHead>
-                <TableHead className="text-right">Future Assigned</TableHead>
+                <FutureAssignedHead />
               </TableRow>
             </TableHeader>
             <TableBody>
               {(q.data?.rows ?? []).map((r) => (
                 <TableRow key={r.email}>
-                  <TableCell>{r.name}<div className="text-[11px] text-muted-foreground">{r.email}</div></TableCell>
+                  <PersonNameCell person={r} onSelect={onSelect} />
                   <TableCell className="text-right tabular-nums">{r.assigned}</TableCell>
                   <TableCell className="text-right tabular-nums">{r.a1}</TableCell>
                   <TableCell className="text-right tabular-nums">{r.a2}</TableCell>
@@ -91,7 +187,7 @@ function CallersCard({ from, to, assignedRows }: { from: string; to: string; ass
   );
 }
 
-function RoundWorkersCard({ round, from, to, assignedRows }: { round: number; from: string; to: string; assignedRows: AssignedRow[] }) {
+function RoundWorkersCard({ round, from, to, assignedRows, onSelect }: CardProps & { round: number }) {
   const q = useQuery({ queryKey: ["admin-round", round, from, to], queryFn: () => getRoundWorkers({ round, from: from || null, to: to || null }) });
   return (
     <Card>
@@ -107,13 +203,13 @@ function RoundWorkersCard({ round, from, to, assignedRows }: { round: number; fr
                 <TableHead className="text-right">Assigned</TableHead>
                 <TableHead className="text-right">Done</TableHead>
                 <TableHead className="text-right">Pass Rate</TableHead>
-                <TableHead className="text-right">Future Assigned</TableHead>
+                <FutureAssignedHead />
               </TableRow>
             </TableHeader>
             <TableBody>
               {(q.data?.rows ?? []).map((r) => (
                 <TableRow key={r.email}>
-                  <TableCell>{r.name}<div className="text-[11px] text-muted-foreground">{r.email}</div></TableCell>
+                  <PersonNameCell person={r} onSelect={onSelect} />
                   <TableCell className="text-right tabular-nums">{r.assigned}</TableCell>
                   <TableCell className="text-right tabular-nums">{r.done}</TableCell>
                   <TableCell className="text-right tabular-nums">{r.pass_rate}%</TableCell>
@@ -131,7 +227,7 @@ function RoundWorkersCard({ round, from, to, assignedRows }: { round: number; fr
   );
 }
 
-function CreationAgentsCard({ from, to, assignedRows }: { from: string; to: string; assignedRows: AssignedRow[] }) {
+function CreationAgentsCard({ from, to, assignedRows, onSelect }: CardProps) {
   const q = useQuery({ queryKey: ["admin-agents", from, to], queryFn: () => getCreationAgents({ from: from || null, to: to || null }) });
   return (
     <Card>
@@ -147,13 +243,13 @@ function CreationAgentsCard({ from, to, assignedRows }: { from: string; to: stri
                 <TableHead className="text-right">Assigned</TableHead>
                 <TableHead className="text-right">Created</TableHead>
                 <TableHead className="text-right">Active</TableHead>
-                <TableHead className="text-right">Future Assigned</TableHead>
+                <FutureAssignedHead />
               </TableRow>
             </TableHeader>
             <TableBody>
               {(q.data?.rows ?? []).map((r) => (
                 <TableRow key={r.email}>
-                  <TableCell>{r.name}<div className="text-[11px] text-muted-foreground">{r.email}</div></TableCell>
+                  <PersonNameCell person={r} onSelect={onSelect} />
                   <TableCell className="text-right tabular-nums">{r.assigned}</TableCell>
                   <TableCell className="text-right tabular-nums">{r.created}</TableCell>
                   <TableCell className="text-right tabular-nums">{r.active}</TableCell>
