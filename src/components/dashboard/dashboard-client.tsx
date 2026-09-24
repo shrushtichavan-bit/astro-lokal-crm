@@ -45,6 +45,8 @@ type RoleDashboardData = {
   pendingGroups: PendingGroup[];
   doneLeads: LeadRow[];
   myStages?: string[];
+  /** Configured round count — decides how many R{n} Taker columns the Done table gets. */
+  numRounds?: number;
 };
 
 function formatContact(c: string): string {
@@ -83,35 +85,40 @@ function DateRangeFilter({ onApply }: { onApply: (f: DateFilter) => void }) {
   );
 }
 
-type LeadSortKey = "lead_date" | "priority" | "source";
+/** "lead_date" | "priority" | "source", or a taker column key (caller, r1_taker, …). */
+type LeadSortKey = string;
 
+const EMPTY_TAKER = "—";
 const sourceOf = (l: LeadRow) => l.source ?? "Direct";
 const priorityLabel = (l: LeadRow) => `S${l.priority}`;
-const FILTER_COLUMNS: FilterColumn<LeadRow>[] = [
+const takerOf = (key: string) => (l: LeadRow) => l.takers?.[key] || EMPTY_TAKER;
+const BASE_FILTER_COLUMNS: FilterColumn<LeadRow>[] = [
   { key: "source", valueOf: sourceOf },
   { key: "priority", valueOf: priorityLabel },
 ];
 const byPriorityLabel = (a: string, b: string) => Number(a.slice(1)) - Number(b.slice(1));
+// Names A→Z, with "—" (stage not taken yet) always listed last.
+const byTakerName = (a: string, b: string) =>
+  a === EMPTY_TAKER ? (b === EMPTY_TAKER ? 0 : 1) : b === EMPTY_TAKER ? -1 : a.localeCompare(b);
 
 type TakerColumn = { key: string; label: string };
 
+/** Every taker column in pipeline order: Caller, R1 Taker, EC Taker, R2 Taker … R{numRounds} Taker. */
+function allTakerColumns(numRounds: number): TakerColumn[] {
+  const laterRounds = Array.from({ length: Math.max(numRounds - 1, 0) }, (_, i) => ({ key: `r${i + 2}_taker`, label: `R${i + 2} Taker` }));
+  return [{ key: "caller", label: "Caller" }, { key: "r1_taker", label: "R1 Taker" }, { key: "ec_taker", label: "EC Taker" }, ...laterRounds];
+}
+
 /**
- * Extra "who did the earlier stages" columns for a Pending group, in pipeline
- * order (Calling → Round 1 → Expert Creation → Round 2 → …): each group shows
- * a taker column for every stage before its own, and nothing else.
+ * Taker columns for a Pending group: one for every stage before the group's
+ * own, in pipeline order (Calling → Round 1 → Expert Creation → Round 2 → …).
  */
-function takerColumnsFor(groupKey: string): TakerColumn[] {
-  const caller = { key: "caller", label: "Caller" };
-  const r1 = { key: "r1_taker", label: "R1 Taker" };
-  const ec = { key: "ec_taker", label: "EC Taker" };
-  if (groupKey === "round_1") return [caller];
-  if (groupKey === "expert_creation") return [caller, r1];
+function takerColumnsFor(groupKey: string, numRounds: number): TakerColumn[] {
+  const all = allTakerColumns(Math.max(numRounds, 2));
+  if (groupKey === "round_1") return all.slice(0, 1);
+  if (groupKey === "expert_creation") return all.slice(0, 2);
   const m = groupKey.match(/^round_(\d+)$/);
-  if (m && Number(m[1]) >= 2) {
-    const n = Number(m[1]);
-    const laterRounds = Array.from({ length: n - 2 }, (_, i) => ({ key: `r${i + 2}_taker`, label: `R${i + 2} Taker` }));
-    return [caller, r1, ec, ...laterRounds];
-  }
+  if (m && Number(m[1]) >= 2) return all.slice(0, Number(m[1]) + 1);
   return [];
 }
 
@@ -138,17 +145,27 @@ function LeadRowsTable({ leads, takerColumns = [] }: { leads: LeadRow[]; takerCo
     setSortDir(dir);
   }
 
-  const visible = leads.filter((l) => rowPassesFilters(l, FILTER_COLUMNS, filters));
+  const takerFilterColumns = React.useMemo(
+    () => takerColumns.map((c): FilterColumn<LeadRow> => ({ key: c.key, valueOf: takerOf(c.key) })),
+    [takerColumns],
+  );
+  const filterColumns = React.useMemo(() => [...BASE_FILTER_COLUMNS, ...takerFilterColumns], [takerFilterColumns]);
+
+  const visible = leads.filter((l) => rowPassesFilters(l, filterColumns, filters));
   const sorted = [...visible].sort((a, b) => {
     if (!sortKey) return 0;
+    if (sortKey !== "lead_date" && sortKey !== "source" && sortKey !== "priority") {
+      const cmp = byTakerName(takerOf(sortKey)(a), takerOf(sortKey)(b));
+      return sortDir === "asc" ? cmp : -cmp;
+    }
     const av = sortKey === "lead_date" ? (a.lead_date ?? "") : sortKey === "source" ? sourceOf(a).toLowerCase() : a.priority;
     const bv = sortKey === "lead_date" ? (b.lead_date ?? "") : sortKey === "source" ? sourceOf(b).toLowerCase() : b.priority;
     if (av === bv) return 0;
     return sortDir === "asc" ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
   });
 
-  const sourceValues = distinctValues(leads, FILTER_COLUMNS[0], FILTER_COLUMNS, filters);
-  const priorityValues = distinctValues(leads, FILTER_COLUMNS[1], FILTER_COLUMNS, filters, byPriorityLabel);
+  const sourceValues = distinctValues(leads, BASE_FILTER_COLUMNS[0], filterColumns, filters);
+  const priorityValues = distinctValues(leads, BASE_FILTER_COLUMNS[1], filterColumns, filters, byPriorityLabel);
   const setFilter = (key: string) => (next: Set<string> | null) => setFilters((f) => ({ ...f, [key]: next }));
   const hiddenCount = leads.length - visible.length;
 
@@ -203,8 +220,20 @@ function LeadRowsTable({ leads, takerColumns = [] }: { leads: LeadRow[]; takerCo
             <TableHead onClick={() => toggleSort("lead_date")} className="cursor-pointer select-none whitespace-nowrap hover:text-foreground">
               Date{sortArrow("lead_date")}
             </TableHead>
-            {takerColumns.map((c) => (
-              <TableHead key={c.key} className="whitespace-nowrap">{c.label}</TableHead>
+            {takerColumns.map((c, i) => (
+              <TableHead key={c.key} className="whitespace-nowrap">
+                <div className="flex items-center gap-1">
+                  <span>{c.label}{sortArrow(c.key)}</span>
+                  <ColumnFilterPopover
+                    label={c.label}
+                    values={distinctValues(leads, takerFilterColumns[i], filterColumns, filters, byTakerName)}
+                    selected={filters[c.key] ?? null}
+                    onChange={setFilter(c.key)}
+                    sortDir={sortKey === c.key ? sortDir : null}
+                    onSort={(dir) => sortBy(c.key, dir)}
+                  />
+                </div>
+              </TableHead>
             ))}
             <TableHead />
           </TableRow>
@@ -223,7 +252,7 @@ function LeadRowsTable({ leads, takerColumns = [] }: { leads: LeadRow[]; takerCo
                 const person = l.takers?.[c.key];
                 return (
                   <TableCell key={c.key} className={cn("truncate", person ? "text-foreground" : "text-muted-foreground")}>
-                    {person || "—"}
+                    {person || EMPTY_TAKER}
                   </TableCell>
                 );
               })}
@@ -406,6 +435,8 @@ function RolePendingDoneDashboard({
   const pendingGroups = q.data?.pendingGroups ?? [];
   const doneLeads = q.data?.doneLeads ?? [];
   const pendingTotal = q.data?.pendingTotal ?? 0;
+  const numRounds = q.data?.numRounds ?? 2;
+  const doneTakerColumns = React.useMemo(() => allTakerColumns(numRounds), [numRounds]);
 
   const term = search.trim().toLowerCase();
   const termDigits = term.replace(/\D/g, "");
@@ -488,7 +519,7 @@ function RolePendingDoneDashboard({
                   </button>
                   {isGroupOpen(g.key) && (
                     <CardContent className="border-t border-border p-0">
-                      <LeadRowsTable leads={g.leads} takerColumns={takerColumnsFor(g.key)} />
+                      <LeadRowsTable leads={g.leads} takerColumns={takerColumnsFor(g.key, numRounds)} />
                     </CardContent>
                   )}
                 </Card>
@@ -506,7 +537,7 @@ function RolePendingDoneDashboard({
                 {filteredDoneLeads.length === 0 ? (
                   <p className="p-4 text-sm text-muted-foreground">Nothing completed in this range.</p>
                 ) : (
-                  <LeadRowsTable leads={filteredDoneLeads} />
+                  <LeadRowsTable leads={filteredDoneLeads} takerColumns={doneTakerColumns} />
                 )}
               </CardContent>
             </Card>
