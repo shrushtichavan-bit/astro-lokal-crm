@@ -239,6 +239,9 @@ export async function retakeStage(input: { lead_id: string; stage: string }) {
   const { rows: leadRows } = await pool.query<LeadRow>(`SELECT * FROM leads WHERE id = $1`, [data.lead_id]);
   const lead = leadRows[0];
   if (!lead) throw new Error("Lead not found");
+  // Any retake cascades into the expert profile link, so a live Active
+  // expert can never be retaken, whichever stage was asked for.
+  if (lead.current_stage === "active") throw new Error("Cannot retake any stage — this lead is Active and live on the platform");
 
   const pendingStage = CURRENT_STAGE_FOR[data.stage];
   if (lead.current_stage === pendingStage) throw new Error("This stage is already in progress");
@@ -289,7 +292,6 @@ export async function retakeStage(input: { lead_id: string; stage: string }) {
         [pendingStage, nextOwner, lead.id],
       );
     } else if (data.stage === "expert_creation") {
-      if (lead.current_stage === "active") throw new Error("Can't retake Expert Creation for an Active expert");
       // Reached means either a linked profile or an Expert Creation drop.
       const { rows: profileRows } = await client.query<{ linked_by: string }>(
         `SELECT linked_by FROM expert_profiles WHERE lead_id = $1`,

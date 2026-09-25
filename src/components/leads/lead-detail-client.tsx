@@ -212,6 +212,9 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
   const numRounds = data.cfg.num_rounds;
   const assignedByStage = new Map((assignments ?? []).map((a) => [a.stage, a.assigned_email]));
   const nameOf = (email: string | null | undefined) => (email ? (names[email] ?? email) : null);
+  // No Retake anywhere once the lead is Active — every retake cascades into
+  // the expert profile link (retakeStage refuses it server-side too).
+  const canRetake = lead.current_stage !== "active";
 
   const items: TimelineItem[] = [];
 
@@ -253,7 +256,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
         {callingState === "current" && callingAssignedEmail && (
           <ReassignControl leadId={lead.id} stage="calling" currentEmail={callingAssignedEmail} onChanged={onChanged} />
         )}
-        {callingState === "done" && (
+        {callingState === "done" && canRetake && (
           <RetakeControl leadId={lead.id} stage="calling" stageLabel="Calling" onChanged={onChanged} />
         )}
         {sortedAttempts.length === 0 && <div>No attempts logged yet.</div>}
@@ -307,7 +310,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
           {state === "current" && (doneBy ?? assignedTo) && (
             <ReassignControl leadId={lead.id} stage={stageKey} currentEmail={doneBy ?? assignedTo} onChanged={onChanged} />
           )}
-          {state === "done" && (
+          {state === "done" && canRetake && (
             <RetakeControl leadId={lead.id} stage={stageKey} stageLabel="Round 1" onChanged={onChanged} />
           )}
           {round?.total_score != null && <div>Score: <span className="font-medium text-foreground">{round.total_score}</span></div>}
@@ -369,8 +372,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
               onChanged={onChanged}
             />
           )}
-          {/* Never for a live Active expert — retaking would unlink a working profile. */}
-          {creationState === "done" && lead.current_stage !== "active" && (
+          {creationState === "done" && canRetake && (
             <RetakeControl leadId={lead.id} stage="expert_creation" stageLabel="Expert Creation" onChanged={onChanged} />
           )}
           {profile && <div>Expert ID: <span className="font-mono text-foreground">{profile.expert_id}</span></div>}
@@ -416,7 +418,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
           {state === "current" && (doneBy ?? assignedTo) && (
             <ReassignControl leadId={lead.id} stage={stageKey} currentEmail={doneBy ?? assignedTo} onChanged={onChanged} />
           )}
-          {state === "done" && (
+          {state === "done" && canRetake && (
             <RetakeControl leadId={lead.id} stage={stageKey} stageLabel={`Round ${n}`} onChanged={onChanged} />
           )}
           {round?.total_score != null && <div>Score: <span className="font-medium text-foreground">{round.total_score}</span></div>}
