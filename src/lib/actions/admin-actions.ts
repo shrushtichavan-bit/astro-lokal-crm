@@ -536,7 +536,7 @@ async function queryLeadsPage(f: AllLeadsFilterT, limit: number) {
 
   params.push(limit + 1);
   const { rows: leads } = await pool.query<Record<string, unknown>>(
-    `SELECT id, lead_id, name, contact, lead_date, priority, current_stage, current_owner_email, assigned_to_email, updated_at
+    `SELECT id, lead_id, name, contact, lead_date, priority, current_stage, current_owner_email, assigned_to_email, updated_at, drop_reason
      FROM leads
      ${allConditions.length ? `WHERE ${allConditions.join(" AND ")}` : ""}
      ORDER BY ${sort.col} ${sort.asc ? "ASC" : "DESC"} NULLS LAST, id ASC
@@ -548,8 +548,8 @@ async function queryLeadsPage(f: AllLeadsFilterT, limit: number) {
 }
 
 type AttemptSlot = { outcome: string; by: string };
-type RoundSlot = { status: "done" | "pending_assigned" | "not_reached"; passed: boolean | null; person: string };
-type ExpertCreationSlot = { status: "done" | "in_progress" | "pending" | "not_reached"; person: string };
+type RoundSlot = { status: "done" | "dropped" | "pending_assigned" | "not_reached"; passed: boolean | null; person: string };
+type ExpertCreationSlot = { status: "done" | "dropped" | "in_progress" | "pending" | "not_reached"; person: string };
 
 type ListRow = {
   id: string;
@@ -592,6 +592,9 @@ async function enrichLeads(leads: Array<Record<string, unknown>>, numRounds: num
       if (r?.submitted_at) {
         return { status: "done", passed: r.passed, person: resolve(r.conducted_by) };
       }
+      if (r?.drop_reason) {
+        return { status: "dropped", passed: null, person: resolve(r.conducted_by) };
+      }
       if (assignedEmail) {
         return { status: "pending_assigned", passed: null, person: resolve(assignedEmail) };
       }
@@ -601,6 +604,9 @@ async function enrichLeads(leads: Array<Record<string, unknown>>, numRounds: num
     let expertCreation: ExpertCreationSlot;
     if (profile) {
       expertCreation = { status: "done", person: resolve(profile.linked_by) };
+    } else if (stage === "dropped_off" && l.drop_reason) {
+      // leads.drop_reason is only ever set by an Expert Creation drop.
+      expertCreation = { status: "dropped", person: resolve(chain.expert_creation ?? (l.current_owner_email as string | null)) };
     } else if (stage === "profile_creation_pending") {
       const assignedEmail = chain.expert_creation;
       expertCreation = assignedEmail
@@ -655,11 +661,13 @@ export async function exportLeadsCsv(input: AllLeadsFilterT) {
   };
   const roundStatusLabel = (r: { status: string; passed: boolean | null }): string => {
     if (r.status === "done") return r.passed ? "Passed" : "Failed";
+    if (r.status === "dropped") return "Dropped";
     if (r.status === "pending_assigned") return "Yet to take";
     return "";
   };
   const expertStatusLabel: Record<string, string> = {
     done: "Done",
+    dropped: "Dropped",
     in_progress: "In Progress",
     pending: "Pending",
     not_reached: "",

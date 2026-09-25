@@ -1,9 +1,16 @@
 import "server-only";
 import { pool } from "@/lib/db";
-import type { UserRow } from "@/lib/db-types";
+import type { RescheduleEntry, UserRow } from "@/lib/db-types";
 
 type AttemptInfo = { outcome: string; attempted_by: string };
-type RoundInfo = { passed: boolean | null; submitted_at: string | null; conducted_by: string };
+type RoundInfo = {
+  passed: boolean | null;
+  submitted_at: string | null;
+  conducted_by: string;
+  reschedule_count: number;
+  reschedule_history: RescheduleEntry[] | null;
+  drop_reason: string | null;
+};
 
 /**
  * Who did (or is assigned to) each pipeline stage, for a batch of leads.
@@ -29,8 +36,9 @@ export async function loadStagePeople(ids: string[], roundNumbers: number[]): Pr
       `SELECT lead_id, attempt_number, outcome, attempted_by FROM call_attempts WHERE lead_id = ANY($1::uuid[])`,
       [ids],
     ),
-    pool.query<{ lead_id: string; round_number: number; passed: boolean | null; submitted_at: string | null; conducted_by: string }>(
-      `SELECT lead_id, round_number, passed, submitted_at, conducted_by FROM interview_rounds WHERE lead_id = ANY($1::uuid[]) AND round_number = ANY($2::int[])`,
+    pool.query<RoundInfo & { lead_id: string; round_number: number }>(
+      `SELECT lead_id, round_number, passed, submitted_at, conducted_by, reschedule_count, reschedule_history, drop_reason
+       FROM interview_rounds WHERE lead_id = ANY($1::uuid[]) AND round_number = ANY($2::int[])`,
       [ids, roundNumbers],
     ),
     pool.query<{ lead_id: string; linked_by: string }>(
@@ -96,4 +104,14 @@ export function stageTakersFor(leadId: string, numRounds: number, sp: StagePeopl
     takers[`r${n}_taker`] = rounds[n]?.submitted_at ? orNull(rounds[n].conducted_by) : null;
   }
   return takers;
+}
+
+export type Round1Reschedule = { count: number; latest_to: string | null };
+
+/** Round 1 reschedule status (count + most recent target time), or null if never rescheduled. */
+export function round1RescheduleFor(leadId: string, sp: StagePeople): Round1Reschedule | null {
+  const r1 = sp.roundsBy.get(leadId)?.[1];
+  if (!r1 || !r1.reschedule_count) return null;
+  const history = r1.reschedule_history ?? [];
+  return { count: r1.reschedule_count, latest_to: history[history.length - 1]?.rescheduled_to ?? null };
 }

@@ -30,6 +30,8 @@ export interface LeadRow {
   current_owner_email: string | null;
   lead_date: string | null;
   closed_at: string | null;
+  /** Expert Creation drop reason (007); round drops live on interview_rounds.drop_reason. */
+  drop_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -87,6 +89,17 @@ export interface InterviewRoundRow {
   passed: boolean | null;
   remarks: string | null;
   next_owner_email: string | null;
+  drop_reason: string | null;
+  reschedule_count: number;
+  reschedule_history: RescheduleEntry[] | null;
+}
+
+/** One reschedule_history entry (migration 006). */
+export interface RescheduleEntry {
+  count: number;
+  rescheduled_to: string;
+  rescheduled_by: string;
+  logged_at: string;
 }
 
 export interface QuestionGradeRow {

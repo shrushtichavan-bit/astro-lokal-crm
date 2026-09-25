@@ -46,8 +46,8 @@ function attemptChipClass(outcome: string): string {
 }
 
 type AttemptSlot = { outcome: string; by: string };
-type RoundSlot = { status: "done" | "pending_assigned" | "not_reached"; passed: boolean | null; person: string };
-type ExpertCreationSlot = { status: "done" | "in_progress" | "pending" | "not_reached"; person: string };
+type RoundSlot = { status: "done" | "dropped" | "pending_assigned" | "not_reached"; passed: boolean | null; person: string };
+type ExpertCreationSlot = { status: "done" | "dropped" | "in_progress" | "pending" | "not_reached"; person: string };
 
 function AttemptSlotCell({ slot }: { slot: AttemptSlot }) {
   if (!slot.outcome) return <span className="text-muted-foreground/30">–</span>;
@@ -69,8 +69,21 @@ function CallingAttemptsCell({ attempts }: { attempts: AttemptSlot[] }) {
   );
 }
 
+/** Red "Dropped" chip (same style as the Junk / Not Interested / Failed / Dropped Off call outcomes) + who dropped it. */
+function DroppedCell({ person }: { person: string }) {
+  return (
+    <div className="flex flex-col items-start gap-0.5">
+      <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium ${attemptChipClass("dropped_off")}`}>
+        Dropped
+      </span>
+      {person && <span className="truncate text-xs text-muted-foreground">{person}</span>}
+    </div>
+  );
+}
+
 function RoundCell({ round }: { round: RoundSlot }) {
   if (round.status === "not_reached") return <span className="text-muted-foreground/30">–</span>;
+  if (round.status === "dropped") return <DroppedCell person={round.person} />;
   if (round.status === "pending_assigned") {
     return (
       <div className="flex flex-col items-start gap-0.5">
@@ -97,6 +110,7 @@ function RoundCell({ round }: { round: RoundSlot }) {
 
 function ExpertCreationCell({ slot }: { slot: ExpertCreationSlot }) {
   if (slot.status === "not_reached") return <span className="text-muted-foreground/30">–</span>;
+  if (slot.status === "dropped") return <DroppedCell person={slot.person} />;
   if (slot.status === "done") {
     return (
       <div className="flex flex-col items-start gap-0.5">

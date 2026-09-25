@@ -99,6 +99,15 @@ export function describeAuditAction(action: string, metadata: unknown): string {
   const roundNumber = typeof meta.round_number === "number" ? meta.round_number : null;
 
   if (action === "lead_created") return "lead created";
+  if (action === "round_1_rescheduled") {
+    const n = typeof meta.reschedule_count === "number" ? meta.reschedule_count : null;
+    return n != null ? `rescheduled round 1 (${n}/3)` : "rescheduled round 1";
+  }
+  if (action === "stage_dropped") {
+    const stageLabel = meta.stage === "expert_creation" ? "expert creation" : String(meta.stage ?? "").replace(/_/g, " ");
+    const reason = typeof meta.reason === "string" ? meta.reason.replace(/_/g, " ") : null;
+    return `dropped at ${stageLabel}${reason ? ` — ${reason}` : ""}`;
+  }
   if (action === "retake_cascade") {
     const label = (st: unknown) =>
       st === "calling" ? "Calling" : st === "expert_creation" ? "Expert Creation" : String(st).replace(/^round_(\d+)$/, "Round $1");

@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { pool } from "@/lib/db";
 import { requireUser, requireRole, type Role } from "@/lib/auth";
-import type { LeadRow, CallAttemptRow, QuestionRow, ExpertProfileRow, UserRow } from "@/lib/db-types";
+import type { LeadRow, CallAttemptRow, QuestionRow, ExpertProfileRow, UserRow, InterviewRoundRow } from "@/lib/db-types";
 import {
   appendAudit,
   transitionLead,
@@ -82,7 +82,7 @@ export async function getLead(input: { id: string }) {
   const [attemptsRes, statusRes, roundsRes, profileRes, assignmentsRes] = await Promise.all([
     pool.query<CallAttemptRow>(`SELECT * FROM call_attempts WHERE lead_id = $1 ORDER BY attempt_number`, [lead.id]),
     pool.query(`SELECT * FROM calling_status WHERE lead_id = $1`, [lead.id]),
-    pool.query(`SELECT * FROM interview_rounds WHERE lead_id = $1 ORDER BY round_number`, [lead.id]),
+    pool.query<InterviewRoundRow>(`SELECT * FROM interview_rounds WHERE lead_id = $1 ORDER BY round_number`, [lead.id]),
     pool.query<ExpertProfileRow>(`SELECT * FROM expert_profiles WHERE lead_id = $1`, [lead.id]),
     pool.query<{ stage: string; assigned_email: string }>(
       `SELECT stage, assigned_email FROM lead_stage_assignments WHERE lead_id = $1`,
@@ -170,6 +170,15 @@ export async function reassignStageOwner(input: { lead_id: string; stage: string
       await pool.query(`UPDATE leads SET current_owner_email = $1, assigned_to_email = $1 WHERE id = $2`, [newEmail, lead.id]);
     } else {
       await pool.query(`UPDATE leads SET current_owner_email = $1 WHERE id = $2`, [newEmail, lead.id]);
+      // A live round can already have an unsubmitted row (from a Round 1
+      // reschedule) — move its conducted_by to the new owner. Only that
+      // column: reschedule_count/history carry over as-is.
+      if (data.stage.startsWith("round_")) {
+        await pool.query(
+          `UPDATE interview_rounds SET conducted_by = $1 WHERE lead_id = $2 AND round_number = $3 AND submitted_at IS NULL`,
+          [newEmail, lead.id, Number(data.stage.slice("round_".length))],
+        );
+      }
     }
   } else if (data.stage === "calling") {
     await pool.query(`UPDATE leads SET assigned_to_email = $1 WHERE id = $2`, [newEmail, lead.id]);
@@ -196,7 +205,7 @@ export async function reassignStageOwner(input: { lead_id: string; stage: string
   return { ok: true };
 }
 
-const RETAKE_STAGES = ["calling", "round_1", "round_2", "round_3", "round_4"] as const;
+const RETAKE_STAGES = ["calling", "round_1", "expert_creation", "round_2", "round_3", "round_4"] as const;
 
 /**
  * Pipeline order, trimmed to the configured round count: Calling → Round 1 →
@@ -209,14 +218,16 @@ function stageSequence(numRounds: number): string[] {
 }
 
 /**
- * Resets an already-completed calling or round stage back to in-progress —
+ * Resets an already-completed calling, round or Expert Creation stage back to in-progress —
  * used by the Retake control on the lead detail Timeline. It's a cascade:
  * every stage after the retaken one (in stageSequence order) is wiped first
  * — later interview_rounds rows (question_grades go with them via FK) and
  * the expert_profiles link if Expert Creation comes later — then the target
  * stage's own result is undone exactly as before (the latest call attempt +
- * calling_status for calling, or the interview_rounds row for a round), and
- * current_stage/current_owner_email move back to it. All in one transaction
+ * calling_status for calling, the interview_rounds row for a round, or the
+ * expert_profiles link + leads.drop_reason for Expert Creation), and
+ * current_stage/current_owner_email move back to it. Stages before the target
+ * (e.g. Round 1 when retaking Expert Creation) are never touched. All in one transaction
  * so a failure can't leave the lead half-reset.
  */
 export async function retakeStage(input: { lead_id: string; stage: string }) {
@@ -274,7 +285,26 @@ export async function retakeStage(input: { lead_id: string; stage: string }) {
       await client.query(`DELETE FROM calling_status WHERE lead_id = $1`, [lead.id]);
       nextOwner = lead.assigned_to_email ?? lead.current_owner_email ?? u.email;
       await client.query(
-        `UPDATE leads SET current_stage = $1, current_owner_email = $2, assigned_to_email = $2, closed_at = NULL WHERE id = $3`,
+        `UPDATE leads SET current_stage = $1, current_owner_email = $2, assigned_to_email = $2, closed_at = NULL, drop_reason = NULL WHERE id = $3`,
+        [pendingStage, nextOwner, lead.id],
+      );
+    } else if (data.stage === "expert_creation") {
+      if (lead.current_stage === "active") throw new Error("Can't retake Expert Creation for an Active expert");
+      // Reached means either a linked profile or an Expert Creation drop.
+      const { rows: profileRows } = await client.query<{ linked_by: string }>(
+        `SELECT linked_by FROM expert_profiles WHERE lead_id = $1`,
+        [lead.id],
+      );
+      const profile = profileRows[0];
+      if (!profile && !lead.drop_reason) throw new Error("Expert Creation hasn't been completed or dropped yet");
+      const { rows: assignRows } = await client.query<{ assigned_email: string }>(
+        `SELECT assigned_email FROM lead_stage_assignments WHERE lead_id = $1 AND stage = 'expert_creation'`,
+        [lead.id],
+      );
+      await client.query(`DELETE FROM expert_profiles WHERE lead_id = $1`, [lead.id]);
+      nextOwner = profile?.linked_by ?? assignRows[0]?.assigned_email ?? lead.current_owner_email ?? u.email;
+      await client.query(
+        `UPDATE leads SET current_stage = $1, current_owner_email = $2, closed_at = NULL, drop_reason = NULL WHERE id = $3`,
         [pendingStage, nextOwner, lead.id],
       );
     } else {
@@ -288,7 +318,7 @@ export async function retakeStage(input: { lead_id: string; stage: string }) {
       await client.query(`DELETE FROM interview_rounds WHERE id = $1`, [round.id]);
       nextOwner = round.conducted_by ?? lead.current_owner_email ?? u.email;
       await client.query(
-        `UPDATE leads SET current_stage = $1, current_owner_email = $2, closed_at = NULL WHERE id = $3`,
+        `UPDATE leads SET current_stage = $1, current_owner_email = $2, closed_at = NULL, drop_reason = NULL WHERE id = $3`,
         [pendingStage, nextOwner, lead.id],
       );
     }
@@ -570,6 +600,92 @@ export async function submitRound(input: {
     await transitionLead(lead.id, "failed", lead.current_owner_email ?? u.email, u.email, { verdict: "failed", total_score: total });
     return { ok: true, total_score: total, verdict: "failed" as const };
   }
+}
+
+// ---------- Reschedule / drop ----------
+
+const MAX_ROUND_1_RESCHEDULES = 3;
+
+/**
+ * Logs a Round 1 reschedule (max 3). The round_1 interview_rounds row only
+ * exists once a round is submitted, so this upserts it — same ON CONFLICT
+ * (lead_id, round_number) shape as submitRound — then bumps the count and
+ * appends to reschedule_history in one statement. Stage and owner are left
+ * untouched; the reschedule fields survive a reassign (reassignStageOwner
+ * never writes them) and are wiped with the row by a retake.
+ */
+export async function rescheduleRound1(input: { lead_id: string; rescheduled_to: string }) {
+  const data = z
+    .object({ lead_id: z.string().uuid(), rescheduled_to: z.iso.datetime({ offset: true }) })
+    .parse(input);
+  const u = await requireUser();
+  const lead = await loadLeadOwned(data.lead_id, u.email);
+  if (lead.current_stage !== "round_1_pending") throw new Error("Lead is not in Round 1");
+
+  const { rows } = await pool.query<{ reschedule_count: number }>(
+    `INSERT INTO interview_rounds (lead_id, round_number, conducted_by, started_at, reschedule_count, reschedule_history)
+     VALUES ($1, 1, $2, now(), 1,
+       jsonb_build_array(jsonb_build_object('count', 1, 'rescheduled_to', $3::text, 'rescheduled_by', $4::text, 'logged_at', now())))
+     ON CONFLICT (lead_id, round_number) DO UPDATE SET
+       reschedule_count = interview_rounds.reschedule_count + 1,
+       reschedule_history = COALESCE(interview_rounds.reschedule_history, '[]'::jsonb) || jsonb_build_array(
+         jsonb_build_object('count', interview_rounds.reschedule_count + 1, 'rescheduled_to', $3::text, 'rescheduled_by', $4::text, 'logged_at', now()))
+     WHERE interview_rounds.reschedule_count < $5
+     RETURNING reschedule_count`,
+    [lead.id, lead.current_owner_email ?? u.email, data.rescheduled_to, u.email, MAX_ROUND_1_RESCHEDULES],
+  );
+  // No row back means the ON CONFLICT WHERE blocked it — already at the max.
+  if (!rows[0]) throw new Error(`Round 1 has already been rescheduled ${MAX_ROUND_1_RESCHEDULES} times`);
+  const newCount = rows[0].reschedule_count;
+
+  await appendAudit(lead.id, "round_1_rescheduled", u.email, { reschedule_count: newCount, rescheduled_to: data.rescheduled_to });
+  return { ok: true, reschedule_count: newCount };
+}
+
+const DROP_STAGE_PENDING: Record<"round_1" | "expert_creation" | "round_2", string> = {
+  round_1: "round_1_pending",
+  expert_creation: "profile_creation_pending",
+  round_2: "round_2_pending",
+};
+
+/**
+ * Drops a lead out of Round 1, Expert Creation or Round 2 with a reason, into
+ * the dropped_off terminal stage. Round drops record the reason on that
+ * round's interview_rounds row (upserted — it may not exist yet); an Expert
+ * Creation drop records it on leads.drop_reason, since no expert_profiles row
+ * exists yet and creating one would count as "profile created" everywhere.
+ */
+export async function dropStage(input: {
+  lead_id: string;
+  stage: "round_1" | "expert_creation" | "round_2";
+  reason: "not_interested" | "failed" | "dropped_off";
+}) {
+  const data = z
+    .object({
+      lead_id: z.string().uuid(),
+      stage: z.enum(["round_1", "expert_creation", "round_2"]),
+      reason: z.enum(["not_interested", "failed", "dropped_off"]),
+    })
+    .parse(input);
+  const u = await requireUser();
+  const lead = await loadLeadOwned(data.lead_id, u.email);
+  const expected = DROP_STAGE_PENDING[data.stage];
+  if (lead.current_stage !== expected) throw new Error(`Lead is not in ${expected} (currently ${lead.current_stage})`);
+
+  if (data.stage === "expert_creation") {
+    await pool.query(`UPDATE leads SET drop_reason = $1 WHERE id = $2`, [data.reason, lead.id]);
+  } else {
+    await pool.query(
+      `INSERT INTO interview_rounds (lead_id, round_number, conducted_by, started_at, drop_reason)
+       VALUES ($1, $2, $3, now(), $4)
+       ON CONFLICT (lead_id, round_number) DO UPDATE SET drop_reason = EXCLUDED.drop_reason`,
+      [lead.id, data.stage === "round_1" ? 1 : 2, lead.current_owner_email ?? u.email, data.reason],
+    );
+  }
+
+  await transitionLead(lead.id, "dropped_off", lead.current_owner_email ?? u.email, u.email, { stage: data.stage, reason: data.reason });
+  await appendAudit(lead.id, "stage_dropped", u.email, { stage: data.stage, reason: data.reason });
+  return { ok: true };
 }
 
 // ---------- Expert creation ----------

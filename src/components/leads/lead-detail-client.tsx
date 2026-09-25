@@ -14,7 +14,11 @@ import {
   linkExpertProfile,
   reassignStageOwner,
   retakeStage,
+  rescheduleRound1,
+  dropStage,
 } from "@/lib/actions/leads-actions";
+import { fmtSlot } from "@/lib/format";
+import { RescheduleChip } from "@/components/reschedule-chip";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { EmptyState } from "@/components/empty-state";
 import { StatusPill, stageToPill, type StatusKind } from "@/components/status-badge";
@@ -89,6 +93,15 @@ const OUTCOME_LABELS: Record<string, string> = {
   failed: "Failed",
   dropped_off: "Dropped Off",
 };
+
+// Same wording as the Calling outcomes.
+const DROP_REASONS = [
+  { value: "not_interested", label: "Not Interested" },
+  { value: "failed", label: "Failed" },
+  { value: "dropped_off", label: "Dropped Off" },
+] as const;
+type DropReason = (typeof DROP_REASONS)[number]["value"];
+const dropReasonLabel = (r: string | null | undefined) => (r ? (OUTCOME_LABELS[r] ?? r) : "");
 
 export function LeadDetailClient({ id, userEmail }: { id: string; userEmail: string }) {
   const qc = useQueryClient();
@@ -267,6 +280,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
     const stageKey = "round_1";
     const isCurrentStage = lead.current_stage === "round_1_pending";
     const assignedTo = isCurrentStage ? lead.current_owner_email : assignedByStage.get(stageKey);
+    const doneBy = round?.submitted_at || round?.drop_reason ? round.conducted_by : null;
     let state: TimelineState;
     let pill: StatusKind;
     let pillLabel: string;
@@ -274,6 +288,8 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
       state = "done";
       pill = round.passed === true ? "passed" : round.passed === false ? "failed" : "pending";
       pillLabel = round.passed === true ? "Passed" : round.passed === false ? "Failed" : "Submitted";
+    } else if (round?.drop_reason) {
+      state = "done"; pill = "dropped_off"; pillLabel = "Dropped Off";
     } else if (isCurrentStage) {
       state = "current"; pill = "pending"; pillLabel = "In progress";
     } else {
@@ -287,15 +303,25 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
       assignedTo: nameOf(assignedTo) ?? null,
       details: (
         <div className="space-y-1 text-sm text-muted-foreground">
-          <div>Conducted by: <span className="font-medium text-foreground">{nameOf(round?.conducted_by) ?? nameOf(assignedTo) ?? "Not started yet"}</span></div>
-          {state === "current" && (round?.conducted_by ?? assignedTo) && (
-            <ReassignControl leadId={lead.id} stage={stageKey} currentEmail={round?.conducted_by ?? assignedTo} onChanged={onChanged} />
+          <div>Conducted by: <span className="font-medium text-foreground">{nameOf(doneBy) ?? nameOf(assignedTo) ?? "Not started yet"}</span></div>
+          {state === "current" && (doneBy ?? assignedTo) && (
+            <ReassignControl leadId={lead.id} stage={stageKey} currentEmail={doneBy ?? assignedTo} onChanged={onChanged} />
           )}
           {state === "done" && (
             <RetakeControl leadId={lead.id} stage={stageKey} stageLabel="Round 1" onChanged={onChanged} />
           )}
           {round?.total_score != null && <div>Score: <span className="font-medium text-foreground">{round.total_score}</span></div>}
           {round?.remarks && <div>Notes: <Linkified text={round.remarks} /></div>}
+          {round?.drop_reason && <div>Drop reason: <span className="font-medium text-foreground">{dropReasonLabel(round.drop_reason)}</span></div>}
+          {(round?.reschedule_history ?? []).length > 0 && (
+            <ol className="mt-1 space-y-0.5 border-t border-border pt-1.5 text-xs">
+              {(round?.reschedule_history ?? []).map((h) => (
+                <li key={h.count}>
+                  Rescheduled {h.count} — for {fmtSlot(h.rescheduled_to)} (by {nameOf(h.rescheduled_by)})
+                </li>
+              ))}
+            </ol>
+          )}
         </div>
       ),
     });
@@ -314,6 +340,8 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
       creationState = "done"; creationPill = "inactive"; creationLabel = "Profile Created";
     } else if (profile && lead.current_stage === "round_2_pending") {
       creationState = "done"; creationPill = "inactive"; creationLabel = "Profile Created";
+    } else if (lead.current_stage === "dropped_off" && lead.drop_reason) {
+      creationState = "done"; creationPill = "dropped_off"; creationLabel = "Dropped Off";
     } else if (isExpertCreationCurrentStage) {
       creationState = "current"; creationPill = "pending"; creationLabel = "In progress";
     } else {
@@ -341,8 +369,15 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
               onChanged={onChanged}
             />
           )}
+          {/* Never for a live Active expert — retaking would unlink a working profile. */}
+          {creationState === "done" && lead.current_stage !== "active" && (
+            <RetakeControl leadId={lead.id} stage="expert_creation" stageLabel="Expert Creation" onChanged={onChanged} />
+          )}
           {profile && <div>Expert ID: <span className="font-mono text-foreground">{profile.expert_id}</span></div>}
           {profile?.notes && <div>Notes: <Linkified text={profile.notes} /></div>}
+          {creationLabel === "Dropped Off" && (
+            <div>Drop reason: <span className="font-medium text-foreground">{dropReasonLabel(lead.drop_reason)}</span></div>
+          )}
         </div>
       ),
     });
@@ -354,6 +389,7 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
     const stageKey = `round_${n}`;
     const isCurrentStage = lead.current_stage === `${stageKey}_pending`;
     const assignedTo = isCurrentStage ? lead.current_owner_email : assignedByStage.get(stageKey);
+    const doneBy = round?.submitted_at || round?.drop_reason ? round.conducted_by : null;
     let state: TimelineState;
     let pill: StatusKind;
     let pillLabel: string;
@@ -361,6 +397,8 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
       state = "done";
       pill = round.passed === true ? "passed" : round.passed === false ? "failed" : "pending";
       pillLabel = round.passed === true ? "Passed" : round.passed === false ? "Failed" : "Submitted";
+    } else if (round?.drop_reason) {
+      state = "done"; pill = "dropped_off"; pillLabel = "Dropped Off";
     } else if (isCurrentStage) {
       state = "current"; pill = "pending"; pillLabel = "In progress";
     } else {
@@ -374,15 +412,16 @@ function LeadTimeline({ data, onChanged }: { data: LeadData; onChanged: () => vo
       assignedTo: nameOf(assignedTo) ?? null,
       details: (
         <div className="space-y-1 text-sm text-muted-foreground">
-          <div>Conducted by: <span className="font-medium text-foreground">{nameOf(round?.conducted_by) ?? nameOf(assignedTo) ?? "Not started yet"}</span></div>
-          {state === "current" && (round?.conducted_by ?? assignedTo) && (
-            <ReassignControl leadId={lead.id} stage={stageKey} currentEmail={round?.conducted_by ?? assignedTo} onChanged={onChanged} />
+          <div>Conducted by: <span className="font-medium text-foreground">{nameOf(doneBy) ?? nameOf(assignedTo) ?? "Not started yet"}</span></div>
+          {state === "current" && (doneBy ?? assignedTo) && (
+            <ReassignControl leadId={lead.id} stage={stageKey} currentEmail={doneBy ?? assignedTo} onChanged={onChanged} />
           )}
           {state === "done" && (
             <RetakeControl leadId={lead.id} stage={stageKey} stageLabel={`Round ${n}`} onChanged={onChanged} />
           )}
           {round?.total_score != null && <div>Score: <span className="font-medium text-foreground">{round.total_score}</span></div>}
           {round?.remarks && <div>Notes: <Linkified text={round.remarks} /></div>}
+          {round?.drop_reason && <div>Drop reason: <span className="font-medium text-foreground">{dropReasonLabel(round.drop_reason)}</span></div>}
         </div>
       ),
     });
@@ -766,6 +805,7 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
   const [busy, setBusy] = React.useState(false);
   const [verdict, setVerdict] = React.useState<{ verdict: string | null; total: number } | null>(null);
 
+  const round1Row = round === 1 ? data.rounds.find((r) => r.round_number === 1) : undefined;
   const questions = startQ.data?.questions ?? [];
   const graded = questions.filter((q) => grades[q.question_id] != null).length;
   const allGraded = questions.length > 0 && graded === questions.length;
@@ -875,6 +915,13 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
           </div>
         )}
 
+        {(round === 1 || round === 2) && (
+          <div className="mt-4 flex flex-wrap items-start gap-3">
+            {round === 1 && <RescheduleControl leadId={lead.id} round1={round1Row} onChanged={onChanged} />}
+            <DropControl leadId={lead.id} stage={round === 1 ? "round_1" : "round_2"} onChanged={onChanged} />
+          </div>
+        )}
+
         <div className="mt-6 space-y-1.5">
           <Label>Notes (optional)</Label>
           <Textarea value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={3} />
@@ -904,6 +951,203 @@ function RoundActions({ data, round, onChanged }: { data: LeadData; round: numbe
         </Button>
       </CardContent>
     </Card>
+  );
+}
+
+/* ===================== RESCHEDULE / DROP ===================== */
+
+function invalidateDashboards(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ["dashboard-pipeline-snapshot"] });
+  queryClient.invalidateQueries({ queryKey: ["dashboard-admin-extras"] });
+  queryClient.invalidateQueries({ queryKey: ["dashboard-activity"] });
+  queryClient.invalidateQueries({ queryKey: ["dashboard-pool"] });
+}
+
+const MAX_RESCHEDULES = 3;
+const HOURS = Array.from({ length: 12 }, (_, i) => String(i + 1));
+const MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, "0"));
+
+function todayYmd(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+/**
+ * Round 1 only: "Reschedule" → "Reschedule 2" → "Reschedule 3", then stays
+ * visible but disabled at 3. Opens a date + 12-hour time picker; the chosen
+ * local time is sent as an ISO timestamp.
+ */
+function RescheduleControl({
+  leadId,
+  round1,
+  onChanged,
+}: {
+  leadId: string;
+  round1: LeadData["rounds"][number] | undefined;
+  onChanged: () => void;
+}) {
+  const count = round1?.reschedule_count ?? 0;
+  const history = round1?.reschedule_history ?? [];
+  const latestTo = history[history.length - 1]?.rescheduled_to ?? null;
+  const maxed = count >= MAX_RESCHEDULES;
+  const label = count === 0 ? "Reschedule" : `Reschedule ${Math.min(count + 1, MAX_RESCHEDULES)}`;
+
+  const [open, setOpen] = React.useState(false);
+  const [date, setDate] = React.useState("");
+  const [hour, setHour] = React.useState("");
+  const [minute, setMinute] = React.useState("00");
+  const [ampm, setAmpm] = React.useState<"AM" | "PM">("PM");
+  const [busy, setBusy] = React.useState(false);
+  const queryClient = useQueryClient();
+
+  function reset() {
+    setDate("");
+    setHour("");
+    setMinute("00");
+    setAmpm("PM");
+  }
+
+  async function confirm() {
+    if (!date || !hour) return;
+    const [y, m, d] = date.split("-").map(Number);
+    const h12 = Number(hour) % 12;
+    const at = new Date(y, m - 1, d, ampm === "PM" ? h12 + 12 : h12, Number(minute));
+    setBusy(true);
+    try {
+      const r = await rescheduleRound1({ lead_id: leadId, rescheduled_to: at.toISOString() });
+      invalidateDashboards(queryClient);
+      toast.success(`Round 1 rescheduled (${r.reschedule_count}/${MAX_RESCHEDULES}) for ${fmtSlot(at.toISOString())}.`);
+      setOpen(false);
+      reset();
+      onChanged();
+    } catch (e) {
+      toast.error("Something went wrong.", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-3">
+      <Dialog
+        open={open}
+        onOpenChange={(o) => {
+          setOpen(o);
+          if (!o) reset();
+        }}
+      >
+        <DialogTrigger asChild>
+          <Button type="button" size="sm" variant="outline" disabled={maxed}>
+            {label}
+          </Button>
+        </DialogTrigger>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Reschedule Round 1</DialogTitle>
+            <DialogDescription>Pick the new date and time. {MAX_RESCHEDULES - count} reschedule{MAX_RESCHEDULES - count === 1 ? "" : "s"} left.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Date</Label>
+              <Input type="date" min={todayYmd()} value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Time</Label>
+              <div className="flex gap-2">
+                <Select value={hour} onValueChange={setHour}>
+                  <SelectTrigger className="w-20"><SelectValue placeholder="Hr" /></SelectTrigger>
+                  <SelectContent>{HOURS.map((h) => <SelectItem key={h} value={h}>{h}</SelectItem>)}</SelectContent>
+                </Select>
+                <Select value={minute} onValueChange={setMinute}>
+                  <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
+                  <SelectContent>{MINUTES.map((mm) => <SelectItem key={mm} value={mm}>{mm}</SelectItem>)}</SelectContent>
+                </Select>
+                <Select value={ampm} onValueChange={(v) => setAmpm(v as "AM" | "PM")}>
+                  <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="AM">AM</SelectItem>
+                    <SelectItem value="PM">PM</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Cancel</Button>
+            </DialogClose>
+            <Button disabled={busy || !date || !hour} onClick={confirm}>
+              {busy ? "Saving…" : "Confirm reschedule"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {count > 0 && <RescheduleChip count={count} latestTo={latestTo} />}
+    </div>
+  );
+}
+
+/** "Drop" → pick a reason (Not Interested / Failed / Dropped Off) → confirm. The picker is the confirmation step. */
+function DropControl({
+  leadId,
+  stage,
+  onChanged,
+}: {
+  leadId: string;
+  stage: "round_1" | "expert_creation" | "round_2";
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [reason, setReason] = React.useState<DropReason | "">("");
+  const [busy, setBusy] = React.useState(false);
+  const queryClient = useQueryClient();
+
+  async function confirm() {
+    if (!reason) return;
+    setBusy(true);
+    try {
+      await dropStage({ lead_id: leadId, stage, reason });
+      invalidateDashboards(queryClient);
+      toast.success(`Lead dropped — ${dropReasonLabel(reason)}.`);
+      onChanged();
+    } catch (e) {
+      toast.error("Something went wrong.", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <Button type="button" size="sm" variant="outline" className="text-destructive hover:text-destructive" onClick={() => setOpen(true)}>
+        Drop
+      </Button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Select value={reason} onValueChange={(v) => setReason(v as DropReason)}>
+        <SelectTrigger className="h-9 w-44"><SelectValue placeholder="Drop reason" /></SelectTrigger>
+        <SelectContent>
+          {DROP_REASONS.map((r) => <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <Button type="button" size="sm" variant="destructive" disabled={!reason || busy} onClick={confirm}>
+        {busy ? "Dropping…" : "Drop lead"}
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        onClick={() => {
+          setOpen(false);
+          setReason("");
+        }}
+      >
+        Cancel
+      </Button>
+    </div>
   );
 }
 
@@ -964,6 +1208,7 @@ function ProfileActions({ data, onChanged }: { data: LeadData; onChanged: () => 
             <Label>Notes (optional)</Label>
             <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} />
           </div>
+          <DropControl leadId={lead.id} stage="expert_creation" onChanged={onChanged} />
           {numRounds > 1 && (
             <div className="space-y-1.5">
               <Label>Who takes Round 2?</Label>

@@ -9,6 +9,7 @@ import { getPipelineSnapshot, getAdminDashboardExtras, getPoolDashboard } from "
 import type { ShellUser } from "@/components/app-shell";
 import { PriorityBadge } from "@/components/priority-badge";
 import { ActivityFeed } from "@/components/activity-feed";
+import { RescheduleChip } from "@/components/reschedule-chip";
 import {
   ColumnFilterPopover,
   distinctValues,
@@ -37,6 +38,8 @@ type LeadRow = {
   priority: number;
   /** Who completed each earlier stage, keyed caller / r1_taker / ec_taker / rN_taker (pool dashboard Pending rows only). */
   takers?: Record<string, string | null | undefined> | null;
+  /** Round 1 reschedule status while the lead is waiting on Round 1 (pool dashboard only). */
+  reschedule?: { count: number; latest_to: string | null } | null;
 };
 type PendingGroup = { key: string; label: string; leads: LeadRow[] };
 type RoleDashboardData = {
@@ -101,7 +104,26 @@ const byPriorityLabel = (a: string, b: string) => Number(a.slice(1)) - Number(b.
 const byTakerName = (a: string, b: string) =>
   a === EMPTY_TAKER ? (b === EMPTY_TAKER ? 0 : 1) : b === EMPTY_TAKER ? -1 : a.localeCompare(b);
 
-type TakerColumn = { key: string; label: string };
+/**
+ * An extra column after the base five. Taker columns only need key + label
+ * (value = that stage's taker, or "—"); others like Reschedule supply their
+ * own filter/sort value and cell renderer.
+ */
+type TakerColumn = {
+  key: string;
+  label: string;
+  value?: (l: LeadRow) => string;
+  render?: (l: LeadRow) => React.ReactNode;
+};
+const columnValue = (c: TakerColumn) => c.value ?? takerOf(c.key);
+
+const RESCHEDULE_COLUMN: TakerColumn = {
+  key: "reschedule",
+  label: "Reschedule",
+  value: (l) => (l.reschedule ? `Rescheduled ${l.reschedule.count}` : EMPTY_TAKER),
+  render: (l) =>
+    l.reschedule ? <RescheduleChip count={l.reschedule.count} latestTo={l.reschedule.latest_to} /> : <span className="text-muted-foreground">{EMPTY_TAKER}</span>,
+};
 
 /** Every taker column in pipeline order: Caller, R1 Taker, EC Taker, R2 Taker … R{numRounds} Taker. */
 function allTakerColumns(numRounds: number): TakerColumn[] {
@@ -146,7 +168,7 @@ function LeadRowsTable({ leads, takerColumns = [] }: { leads: LeadRow[]; takerCo
   }
 
   const takerFilterColumns = React.useMemo(
-    () => takerColumns.map((c): FilterColumn<LeadRow> => ({ key: c.key, valueOf: takerOf(c.key) })),
+    () => takerColumns.map((c): FilterColumn<LeadRow> => ({ key: c.key, valueOf: columnValue(c) })),
     [takerColumns],
   );
   const filterColumns = React.useMemo(() => [...BASE_FILTER_COLUMNS, ...takerFilterColumns], [takerFilterColumns]);
@@ -155,7 +177,9 @@ function LeadRowsTable({ leads, takerColumns = [] }: { leads: LeadRow[]; takerCo
   const sorted = [...visible].sort((a, b) => {
     if (!sortKey) return 0;
     if (sortKey !== "lead_date" && sortKey !== "source" && sortKey !== "priority") {
-      const cmp = byTakerName(takerOf(sortKey)(a), takerOf(sortKey)(b));
+      const col = takerColumns.find((c) => c.key === sortKey);
+      const valueOf = col ? columnValue(col) : takerOf(sortKey);
+      const cmp = byTakerName(valueOf(a), valueOf(b));
       return sortDir === "asc" ? cmp : -cmp;
     }
     const av = sortKey === "lead_date" ? (a.lead_date ?? "") : sortKey === "source" ? sourceOf(a).toLowerCase() : a.priority;
@@ -249,6 +273,7 @@ function LeadRowsTable({ leads, takerColumns = [] }: { leads: LeadRow[]; takerCo
               <TableCell><PriorityBadge priority={l.priority} /></TableCell>
               <TableCell className="truncate text-muted-foreground">{l.lead_date ?? "—"}</TableCell>
               {takerColumns.map((c) => {
+                if (c.render) return <TableCell key={c.key}>{c.render(l)}</TableCell>;
                 const person = l.takers?.[c.key];
                 return (
                   <TableCell key={c.key} className={cn("truncate", person ? "text-foreground" : "text-muted-foreground")}>
@@ -519,7 +544,14 @@ function RolePendingDoneDashboard({
                   </button>
                   {isGroupOpen(g.key) && (
                     <CardContent className="border-t border-border p-0">
-                      <LeadRowsTable leads={g.leads} takerColumns={takerColumnsFor(g.key, numRounds)} />
+                      <LeadRowsTable
+                        leads={g.leads}
+                        takerColumns={[
+                          ...takerColumnsFor(g.key, numRounds),
+                          // Only on Round 1, and only once something in the group was rescheduled.
+                          ...(g.key === "round_1" && g.leads.some((l) => l.reschedule) ? [RESCHEDULE_COLUMN] : []),
+                        ]}
+                      />
                     </CardContent>
                   )}
                 </Card>

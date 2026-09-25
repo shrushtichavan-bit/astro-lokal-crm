@@ -3,7 +3,7 @@
 import { z } from "zod";
 import { pool } from "@/lib/db";
 import { requireRole, requireUser } from "@/lib/auth";
-import { loadStagePeople, stageTakersFor, type StageTakers } from "@/lib/stage-people";
+import { loadStagePeople, round1RescheduleFor, stageTakersFor, type Round1Reschedule, type StageTakers } from "@/lib/stage-people";
 
 const DateFilterSchema = z.object({ from: z.string().nullish(), to: z.string().nullish() });
 type DateFilterT = z.infer<typeof DateFilterSchema>;
@@ -462,9 +462,11 @@ export async function getPoolDashboard(input: DateFilterT) {
   const stagePeople = listedIds.length
     ? await loadStagePeople(listedIds, Array.from({ length: numRounds }, (_, i) => i + 1))
     : null;
-  const withTakers = (l: OwnedLead): OwnedLead & { takers: StageTakers | null } => ({
+  const withTakers = (l: OwnedLead): OwnedLead & { takers: StageTakers | null; reschedule: Round1Reschedule | null } => ({
     ...l,
     takers: stagePeople ? stageTakersFor(l.id, numRounds, stagePeople) : null,
+    // Only meaningful while the lead is still waiting on Round 1.
+    reschedule: stagePeople && l.current_stage === "round_1_pending" ? round1RescheduleFor(l.id, stagePeople) : null,
   });
 
   return {
