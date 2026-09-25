@@ -199,11 +199,25 @@ export async function reassignStageOwner(input: { lead_id: string; stage: string
 const RETAKE_STAGES = ["calling", "round_1", "round_2", "round_3", "round_4"] as const;
 
 /**
+ * Pipeline order, trimmed to the configured round count: Calling → Round 1 →
+ * Expert Creation → Round 2 → … Round N. Retake wipes everything after the
+ * retaken stage in this order.
+ */
+function stageSequence(numRounds: number): string[] {
+  const later = Array.from({ length: Math.max(numRounds - 1, 0) }, (_, i) => `round_${i + 2}`);
+  return ["calling", "round_1", "expert_creation", ...later];
+}
+
+/**
  * Resets an already-completed calling or round stage back to in-progress —
- * used by the Retake control on the lead detail Timeline. Undoes exactly
- * that stage's own recorded result (the latest call attempt + calling_status
- * for calling, or the interview_rounds row for a round) and moves the lead's
- * current_stage/current_owner_email back to it.
+ * used by the Retake control on the lead detail Timeline. It's a cascade:
+ * every stage after the retaken one (in stageSequence order) is wiped first
+ * — later interview_rounds rows (question_grades go with them via FK) and
+ * the expert_profiles link if Expert Creation comes later — then the target
+ * stage's own result is undone exactly as before (the latest call attempt +
+ * calling_status for calling, or the interview_rounds row for a round), and
+ * current_stage/current_owner_email move back to it. All in one transaction
+ * so a failure can't leave the lead half-reset.
  */
 export async function retakeStage(input: { lead_id: string; stage: string }) {
   const data = z
@@ -218,41 +232,78 @@ export async function retakeStage(input: { lead_id: string; stage: string }) {
   const pendingStage = CURRENT_STAGE_FOR[data.stage];
   if (lead.current_stage === pendingStage) throw new Error("This stage is already in progress");
 
-  let nextOwner: string;
+  const { num_rounds } = await loadRoundConfig();
+  const sequence = stageSequence(num_rounds);
+  const targetIdx = sequence.indexOf(data.stage);
+  // A round beyond the current num_rounds (config lowered after it was taken)
+  // has nothing configured after it — retake it alone, as before.
+  const laterStages = targetIdx === -1 ? [] : sequence.slice(targetIdx + 1);
 
-  if (data.stage === "calling") {
-    const { rows: attemptRows } = await pool.query<{ id: string }>(
-      `SELECT id FROM call_attempts WHERE lead_id = $1 ORDER BY attempt_number DESC LIMIT 1`,
-      [lead.id],
-    );
-    if (!attemptRows[0]) throw new Error("No call attempt has been logged yet");
-    await pool.query(`DELETE FROM call_attempts WHERE id = $1`, [attemptRows[0].id]);
-    await pool.query(`DELETE FROM calling_status WHERE lead_id = $1`, [lead.id]);
-    nextOwner = lead.assigned_to_email ?? lead.current_owner_email ?? u.email;
-    await pool.query(
-      `UPDATE leads SET current_stage = $1, current_owner_email = $2, assigned_to_email = $2, closed_at = NULL WHERE id = $3`,
-      [pendingStage, nextOwner, lead.id],
-    );
-  } else {
-    const roundNumber = Number(data.stage.slice("round_".length));
-    const { rows: roundRows } = await pool.query<{ id: string; conducted_by: string }>(
-      `SELECT id, conducted_by FROM interview_rounds WHERE lead_id = $1 AND round_number = $2`,
-      [lead.id, roundNumber],
-    );
-    const round = roundRows[0];
-    if (!round) throw new Error(`Round ${roundNumber} hasn't been conducted yet`);
-    await pool.query(`DELETE FROM interview_rounds WHERE id = $1`, [round.id]);
-    nextOwner = round.conducted_by ?? lead.current_owner_email ?? u.email;
-    await pool.query(
-      `UPDATE leads SET current_stage = $1, current_owner_email = $2, closed_at = NULL WHERE id = $3`,
-      [pendingStage, nextOwner, lead.id],
-    );
+  const client = await pool.connect();
+  const wipedStages: string[] = [];
+  let nextOwner: string;
+  try {
+    await client.query("BEGIN");
+
+    // 1. Wipe every later stage: its recorded result and its
+    // lead_stage_assignments row, so nobody shows as assigned to it (Timeline
+    // "Assigned to", People → Future Assigned) until the lead reaches it again.
+    for (const stage of laterStages) {
+      const result =
+        stage === "expert_creation"
+          ? await client.query(`DELETE FROM expert_profiles WHERE lead_id = $1`, [lead.id])
+          : await client.query(`DELETE FROM interview_rounds WHERE lead_id = $1 AND round_number = $2`, [
+              lead.id,
+              Number(stage.slice("round_".length)),
+            ]);
+      const assignment = await client.query(`DELETE FROM lead_stage_assignments WHERE lead_id = $1 AND stage = $2`, [
+        lead.id,
+        stage,
+      ]);
+      if (result.rowCount || assignment.rowCount) wipedStages.push(stage);
+    }
+
+    // 2. Reset the target stage itself — unchanged from the non-cascade version.
+    if (data.stage === "calling") {
+      const { rows: attemptRows } = await client.query<{ id: string }>(
+        `SELECT id FROM call_attempts WHERE lead_id = $1 ORDER BY attempt_number DESC LIMIT 1`,
+        [lead.id],
+      );
+      if (!attemptRows[0]) throw new Error("No call attempt has been logged yet");
+      await client.query(`DELETE FROM call_attempts WHERE id = $1`, [attemptRows[0].id]);
+      await client.query(`DELETE FROM calling_status WHERE lead_id = $1`, [lead.id]);
+      nextOwner = lead.assigned_to_email ?? lead.current_owner_email ?? u.email;
+      await client.query(
+        `UPDATE leads SET current_stage = $1, current_owner_email = $2, assigned_to_email = $2, closed_at = NULL WHERE id = $3`,
+        [pendingStage, nextOwner, lead.id],
+      );
+    } else {
+      const roundNumber = Number(data.stage.slice("round_".length));
+      const { rows: roundRows } = await client.query<{ id: string; conducted_by: string }>(
+        `SELECT id, conducted_by FROM interview_rounds WHERE lead_id = $1 AND round_number = $2`,
+        [lead.id, roundNumber],
+      );
+      const round = roundRows[0];
+      if (!round) throw new Error(`Round ${roundNumber} hasn't been conducted yet`);
+      await client.query(`DELETE FROM interview_rounds WHERE id = $1`, [round.id]);
+      nextOwner = round.conducted_by ?? lead.current_owner_email ?? u.email;
+      await client.query(
+        `UPDATE leads SET current_stage = $1, current_owner_email = $2, closed_at = NULL WHERE id = $3`,
+        [pendingStage, nextOwner, lead.id],
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
   }
 
-  const stageLabel = data.stage === "calling" ? "Calling" : `Round ${data.stage.slice("round_".length)}`;
-  await appendAudit(lead.id, `Stage ${stageLabel} reset for retake by ${u.email}`, u.email, { stage: data.stage });
+  await appendAudit(lead.id, "retake_cascade", u.email, { retaken_stage: data.stage, wiped_stages: wipedStages });
 
-  return { ok: true };
+  return { ok: true, wiped_stages: wipedStages };
 }
 
 // ---------- Telecaller ----------

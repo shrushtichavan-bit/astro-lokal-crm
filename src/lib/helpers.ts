@@ -99,6 +99,12 @@ export function describeAuditAction(action: string, metadata: unknown): string {
   const roundNumber = typeof meta.round_number === "number" ? meta.round_number : null;
 
   if (action === "lead_created") return "lead created";
+  if (action === "retake_cascade") {
+    const label = (st: unknown) =>
+      st === "calling" ? "Calling" : st === "expert_creation" ? "Expert Creation" : String(st).replace(/^round_(\d+)$/, "Round $1");
+    const wiped = Array.isArray(meta.wiped_stages) ? meta.wiped_stages.map(label) : [];
+    return `reset ${label(meta.retaken_stage)} for retake${wiped.length ? ` (cleared ${wiped.join(", ")})` : ""}`;
+  }
   if (action === "telecaller_assigned") return "telecaller assigned";
 
   const attemptMatch = action.match(/^attempt_\d+:(.+)$/);

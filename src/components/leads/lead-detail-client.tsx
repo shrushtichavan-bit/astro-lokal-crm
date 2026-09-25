@@ -502,7 +502,7 @@ function ReassignControl({
   );
 }
 
-/** Inline "Retake" link + confirm dialog shown on a completed calling/round Timeline stage — resets it back to in-progress. */
+/** Inline "Retake" link + confirm dialog shown on a completed calling/round Timeline stage — resets it back to in-progress and clears every later stage. */
 function RetakeControl({
   leadId,
   stage,
@@ -547,7 +547,8 @@ function RetakeControl({
         <DialogHeader>
           <DialogTitle>Retake {stageLabel}?</DialogTitle>
           <DialogDescription>
-            Are you sure you want to retake {stageLabel}? This will reset the result and mark it as In Progress again.
+            This will send the lead back to {stageLabel} and permanently clear all results recorded after it — including any
+            completed rounds, scores, and the expert profile link. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -555,7 +556,7 @@ function RetakeControl({
             <Button variant="outline">Cancel</Button>
           </DialogClose>
           <Button variant="destructive" disabled={busy} onClick={confirm}>
-            {busy ? "Resetting…" : "Retake"}
+            {busy ? "Resetting…" : "Yes, retake and clear later stages"}
           </Button>
         </DialogFooter>
       </DialogContent>
